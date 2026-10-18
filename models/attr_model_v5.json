@@ -1,0 +1,66 @@
+{
+ "version": 1,
+ "form": "lin/all",
+ "prior": 0.004735530448403348,
+ "hidden": 1.0629576267094094,
+ "b": 0.4669503055499994,
+ "gz": 0.42873429498857735,
+ "g_dist": -0.4923927896348679,
+ "dist_center": 3.5,
+ "dist_scale": 2.0,
+ "g_opr": 0.28968075432274254,
+ "opr_floor": 0.02,
+ "zone_eps": 0.001,
+ "doc": "w_r = (zone_r + zone_eps)^gz * (s_r + prior * vis_r + hidden * (1 - vis_r))^b * exp(g_dist * (dist_r - dist_center) / dist_scale), normalised over the alliance's robots for each scoreboard jump (dist_r: mean distance to its hub over the window, term dropped if unknown); then each team's match total is multiplied by opr_share_r^g_opr (opr_share floored at opr_floor) and the alliance renormalised to the same total. data/exp_attrmodel/RESULTS_section.md",
+ "fit": {
+  "spec": "lin/all+dist+mlprior",
+  "lambda": 3e-05,
+  "alliances": 105,
+  "matches": 54,
+  "source": "ds_v5.pkl",
+  "in_sample": {
+   "tv": 0.12637692780451368,
+   "corr": 0.8533013532884142,
+   "top": 0.6761904761904762,
+   "fuel_mae": 42.674282111004935,
+   "fuel_corr": 0.8746709439188274,
+   "slope": 0.6927932330887988,
+   "n": 105
+  },
+  "theta": {
+   "lp": -5.352661531500745,
+   "lh": 0.061055236579797056,
+   "lb": -0.7615324390739112,
+   "gz": 0.42873429498857735,
+   "g_dist": -0.4923927896348679,
+   "g_ml": 0.28968075432274254
+  },
+  "cv_lomo": {
+   "tv": 0.13061585688162466,
+   "corr": 0.8413254209145038,
+   "top": 0.6666666666666666,
+   "fuel_mae": 43.940889122030626,
+   "fuel_corr": 0.8677704942216915,
+   "slope": 0.6830551637347974,
+   "n": 105
+  },
+  "cv_blend_0.7_0.3": {
+   "tv": 0.1426752780793935,
+   "corr": 0.8315594132282149,
+   "top": 0.6857142857142857,
+   "fuel_mae": 46.719752920330194,
+   "fuel_corr": 0.8629122554404791,
+   "slope": 0.5594230619713049,
+   "n": 105
+  },
+  "cv_video_only": {
+   "tv": 0.1422459069353184,
+   "corr": 0.8060382617023141,
+   "top": 0.6095238095238096,
+   "fuel_mae": 48.7729470529118,
+   "fuel_corr": 0.8251151990953276,
+   "slope": 0.6349547509268555,
+   "n": 105
+  }
+ }
+}

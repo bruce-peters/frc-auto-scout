@@ -1,0 +1,34 @@
+{
+ "w": [
+  0.38283532690770933,
+  0.2496325196640671,
+  0.0,
+  0.0,
+  0.0,
+  0.14306727206284692,
+  0.06507955853169996,
+  0.0525275287084838,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.055867555370203215
+ ],
+ "features": [
+  "main_top_n",
+  "main_top_area",
+  "main_exit_n",
+  "main_exit_area",
+  "near_end_top_n",
+  "near_end_top_area",
+  "near_end_exit_n",
+  "near_end_exit_area",
+  "far_end_top_n",
+  "far_end_top_area",
+  "far_end_exit_n",
+  "far_end_exit_area"
+ ],
+ "lag": 2.5,
+ "smooth": 3,
+ "n_train": 260
+}

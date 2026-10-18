@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>auto-scout inspector</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=League+Spartan:wght@600;700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header id="topbar">
+  <a class="brand" href="#" aria-label="auto-scout home">auto-scout</a>
+  <nav class="views" aria-label="View">
+    <button class="tab-btn active" data-view="inspect">Matches</button>
+    <button class="tab-btn" data-view="system">How it works</button>
+  </nav>
+  <div class="hint">
+    <span><kbd>Space</kbd> play</span>
+    <span><kbd>←</kbd><kbd>→</kbd> 1 s</span>
+    <span><kbd>,</kbd><kbd>.</kbd> 1 frame</span>
+    <span>Click a robot to inspect it</span>
+  </div>
+</header>
+
+<div id="app">
+  <aside id="sidebar">
+    <input id="filter" type="search" placeholder="Team, event or match" autocomplete="off" aria-label="Filter matches">
+    <div class="filters">
+      <select id="event-filter" aria-label="Event"><option value="">All events</option></select>
+      <label class="tog"><input type="checkbox" id="flagged-only"><span>Issues only</span></label>
+    </div>
+    <div id="match-list"></div>
+  </aside>
+
+  <main id="inspect-view">
+    <div id="empty" class="empty"></div>
+    <div id="match" hidden>
+      <section id="match-header"></section>
+      <section id="stage">
+        <div id="video-col">
+          <div id="video-wrap">
+            <div class="frame">
+              <video id="video" preload="auto" playsinline></video>
+              <canvas id="overlay"></canvas>
+            </div>
+          </div>
+          <div id="controls">
+            <button id="play" class="round primary" title="Play / pause (Space)" aria-label="Play"></button>
+            <div class="group">
+              <button data-step="-1" title="Back 1 s (←)">−1 s</button>
+              <button data-step="-0.0166667" title="Back 1 frame (,)">−1 f</button>
+              <button data-step="0.0166667" title="Forward 1 frame (.)">+1 f</button>
+              <button data-step="1" title="Forward 1 s (→)">+1 s</button>
+            </div>
+            <select id="speed" title="Playback speed" aria-label="Playback speed">
+              <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+              <option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
+            </select>
+            <div class="group" id="jumps">
+              <button data-jump="0">Auto</button>
+              <button data-jump="20">Teleop</button>
+              <button data-jump="130">Endgame</button>
+            </div>
+            <span id="clock"></span>
+          </div>
+          <div id="layers" role="group" aria-label="Overlay layers">
+            <label class="tog"><input type="checkbox" data-layer="boxes" checked><span>Robot boxes</span></label>
+            <label class="tog"><input type="checkbox" data-layer="unassigned" checked><span>Unlabelled boxes</span></label>
+            <label class="tog"><input type="checkbox" data-layer="shots" checked><span>Launch arcs</span></label>
+            <label class="tog"><input type="checkbox" data-layer="credit" checked><span>Fuel credit</span></label>
+            <label class="tog"><input type="checkbox" data-layer="counters" checked><span>Scoreboard OCR</span></label>
+            <label class="tog"><input type="checkbox" data-layer="segids"><span>Segment ids</span></label>
+            <label class="tog"><input type="checkbox" data-layer="views"><span>Camera views</span></label>
+            <label class="tog"><input type="checkbox" data-layer="solo"><span>Selected team only</span></label>
+            <button id="label-toggle" class="label-toggle" title="Label who launched the fuel behind each counter jump">Label shooters</button>
+          </div>
+        </div>
+        <div id="side-col">
+          <div class="panel" id="label-card" hidden>
+            <div class="panel-head">
+              <h2>Label shooters</h2>
+              <select id="lab-speed" title="Playback speed while labelling" aria-label="Labelling speed">
+                <option value="0.25">0.25×</option><option value="0.5" selected>0.5×</option><option value="1">1×</option>
+              </select>
+            </div>
+            <div class="lab-name">
+              <label>Your name <input id="lab-name" type="text" maxlength="40" placeholder="Name" autocomplete="off"></label>
+              <span id="lab-saved" class="faint"></span>
+            </div>
+            <div id="lab-burst" class="lab-burst"></div>
+            <div id="lab-teams" class="lab-teams"></div>
+            <div class="lab-actions">
+              <button id="lab-other" title="h">Human player / other <kbd>H</kbd></button>
+              <button id="lab-unsure" title="u">Can't tell <kbd>U</kbd></button>
+            </div>
+            <div class="lab-nav">
+              <button id="lab-prev" title="p">Prev <kbd>P</kbd></button>
+              <button id="lab-replay" title="r">Replay <kbd>R</kbd></button>
+              <button id="lab-next" class="primary" title="Enter">Save and next</button>
+            </div>
+            <div id="lab-progress" class="lab-progress"></div>
+            <details class="lab-help"><summary>How to label</summary>
+              <p>Each item is one <b>scoring burst</b>: the alliance's fuel counter on the scoreboard went up by the number shown.
+              The clip plays the few seconds <i>before</i> the jump, because balls take about 1 to 5 s from launch to being counted.</p>
+              <p>Mark <b>every robot that launched balls into its hub</b> in that clip with <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd>,
+              then press <kbd>Enter</kbd>. If several robots shot, the balls are split evenly. Use <b>Can't tell</b> rather than guessing,
+              and <b>Human player / other</b> if no robot launched them. Bumper numbers are easiest to read in the end cameras
+              at the bottom of the frame. The system's own boxes and credits are hidden while you label.</p>
+            </details>
+          </div>
+          <div class="panel" id="credit-card">
+            <div class="panel-head"><h2>Fuel credit</h2><span class="faint">Each scoreboard jump, as it happens</span></div>
+            <div id="credit-feed"></div>
+          </div>
+          <div class="panel" id="field-card">
+            <div class="panel-head"><h2>Field</h2><span class="faint">Top down, blue wall on the left</span></div>
+            <canvas id="fieldmap"></canvas>
+          </div>
+          <div class="panel" id="selection">
+            <div class="panel-head"><h2>Selection</h2></div>
+            <div id="sel-body"></div>
+          </div>
+        </div>
+      </section>
+      <section class="panel" id="timeline-card">
+        <div class="panel-head"><h2>Timeline</h2><span class="faint">Click anywhere to seek</span></div>
+        <ul class="legend">
+          <li><i class="lg-bar"></i>Scoreboard jumps per second</li>
+          <li><i class="lg-strip"></i>Tracked segment</li>
+          <li><i class="lg-strip bad"></i>Against its own bumper reads</li>
+          <li><i class="lg-tick"></i>Launch</li>
+          <li><i class="lg-credit"></i>Fuel credited</li>
+          <li><i class="lg-hatch"></i>Hub inactive</li>
+        </ul>
+        <div id="filmstrip" class="filmstrip" hidden></div>
+        <canvas id="timeline"></canvas>
+        <div id="tl-tip" hidden></div>
+      </section>
+      <section id="tables">
+        <div class="subtabs" role="tablist" aria-label="Evidence">
+          <button class="sub active" data-sub="teams" role="tab"><span>Teams</span><small data-count="teams"></small></button>
+          <button class="sub" data-sub="segments" role="tab"><span>Identity segments</span><small data-count="segments"></small></button>
+          <button class="sub" data-sub="shots" role="tab"><span>Launches</span><small data-count="shots"></small></button>
+          <button class="sub" data-sub="flags" role="tab"><span>Flags</span><small data-count="flags"></small></button>
+          <button class="sub" data-sub="labels" role="tab"><span>Shooter labels</span><small data-count="labels"></small></button>
+        </div>
+        <div id="sub-body"></div>
+      </section>
+    </div>
+  </main>
+
+  <main id="system-view" hidden>
+    <article id="doc" class="doc">Loading…</article>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

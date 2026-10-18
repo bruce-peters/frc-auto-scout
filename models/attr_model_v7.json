@@ -1,0 +1,66 @@
+{
+ "version": 1,
+ "form": "lin/all",
+ "prior": 0.020073824112156757,
+ "hidden": 1.3482573061027001,
+ "b": 0.6017990236138919,
+ "gz": 0.43685522910283897,
+ "g_dist": -0.3333871443402855,
+ "dist_center": 3.5,
+ "dist_scale": 2.0,
+ "g_opr": 0.290267288033379,
+ "opr_floor": 0.02,
+ "zone_eps": 0.001,
+ "doc": "w_r = (zone_r + zone_eps)^gz * (s_r + prior * vis_r + hidden * (1 - vis_r))^b * exp(g_dist * (dist_r - dist_center) / dist_scale), normalised over the alliance's robots for each scoreboard jump (dist_r: mean distance to its hub over the window, term dropped if unknown); then each team's match total is multiplied by opr_share_r^g_opr (opr_share floored at opr_floor) and the alliance renormalised to the same total. data/exp_attrmodel/RESULTS_section.md",
+ "fit": {
+  "spec": "lin/all+dist+mlprior",
+  "lambda": 3e-05,
+  "alliances": 105,
+  "matches": 54,
+  "source": "ds_v7.pkl",
+  "in_sample": {
+   "tv": 0.12736777927203713,
+   "corr": 0.8474907976730168,
+   "top": 0.7047619047619048,
+   "fuel_mae": 43.0881344119509,
+   "fuel_corr": 0.8695413495414953,
+   "slope": 0.692753687687956,
+   "n": 105
+  },
+  "theta": {
+   "lp": -3.9083385956017773,
+   "lh": 0.2988128741730109,
+   "lb": -0.5078317372303599,
+   "gz": 0.43685522910283897,
+   "g_dist": -0.3333871443402855,
+   "g_ml": 0.290267288033379
+  },
+  "cv_lomo": {
+   "tv": 0.1316300680715115,
+   "corr": 0.8340155271710927,
+   "top": 0.6952380952380952,
+   "fuel_mae": 44.3960049960403,
+   "fuel_corr": 0.8602172433299096,
+   "slope": 0.6837010809373016,
+   "n": 105
+  },
+  "cv_blend_0.7_0.3": {
+   "tv": 0.14182814174564687,
+   "corr": 0.833617782003961,
+   "top": 0.6857142857142857,
+   "fuel_mae": 46.81109654460201,
+   "fuel_corr": 0.8605074194334303,
+   "slope": 0.5489165243473004,
+   "n": 105
+  },
+  "cv_video_only": {
+   "tv": 0.13965864511618858,
+   "corr": 0.81141357500689,
+   "top": 0.6285714285714286,
+   "fuel_mae": 47.991192942981066,
+   "fuel_corr": 0.8299639990185941,
+   "slope": 0.6489807128967978,
+   "n": 105
+  }
+ }
+}

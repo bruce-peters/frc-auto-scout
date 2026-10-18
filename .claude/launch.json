@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "inspector",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "autoscout.inspector", "--port", "8765"],
+      "port": 8765
+    },
+    {
+      "name": "inspector-labels",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "autoscout.inspector", "--port", "8766"],
+      "port": 8766
+    }
+  ]
+}
