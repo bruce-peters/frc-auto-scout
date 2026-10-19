@@ -127,7 +127,11 @@ class Pack:
 
 
 # ----------------------------------------------------------------------------- model
-SETS = {"all": ["s_all"], "kind": ["s_box", "s_proj", "s_projh"], "view": ["s_own", "s_oth", "s_main"]}
+SETS = {"all": ["s_all"], "kind": ["s_box", "s_proj", "s_projh"], "view": ["s_own", "s_oth", "s_main"],
+        # each ball once: the camera with the most launch evidence in the window ("vmax"), or that plus a fitted
+        # share beta of what the other cameras add ("vsoft": beta 1 = today's sum over cameras, 0 = vmax)
+        "vmax": [], "vsoft": []}
+VIEW_FEATS = ("s_own", "s_oth", "s_main")
 
 
 class Spec:
@@ -149,6 +153,8 @@ class Spec:
         for i, k in enumerate(ks):
             if i > 0 or self.form == "gp":  # first gain fixed at 1 for lin (scale redundancy)
                 th[f"la_{k}"] = 0.0
+        if self.sset == "vsoft":
+            th["lr_sec"] = float(np.log(0.5))
         if self.form == "lin":
             th["lp"] = float(np.log(0.12))
             th["lh"] = float(np.log(2.0))
@@ -195,6 +201,10 @@ class Spec:
         for i, k in enumerate(ks):
             a = torch.exp(th[f"la_{k}"]) if f"la_{k}" in th else 1.0
             S = S + a * P.f(k)
+        if self.sset in ("vmax", "vsoft"):
+            V = torch.stack([P.f(k) for k in VIEW_FEATS], -1)
+            mx = V.max(-1).values
+            S = mx + (torch.exp(th["lr_sec"]) * (V.sum(-1) - mx) if self.sset == "vsoft" else 0.0)
         if "mid" in th:
             S = S + torch.exp(th["lc_mid"]) * P.f("s_mid")
         for e in self.extras:

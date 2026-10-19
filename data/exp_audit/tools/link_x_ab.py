@@ -29,9 +29,14 @@ def _val(x):
     return {"True": True, "False": False}.get(x, float(x) if x.replace(".", "", 1).lstrip("-").isdigit() else x)
 
 
+def _owner(k):  # "NAME" -> pipeline, "attribution.NAME" -> pipeline.attribution
+    mod, _, name = k.rpartition(".")
+    return (getattr(pipeline, mod) if mod else pipeline), name
+
+
 for kv in a.set:
     k_, v_ = kv.split("=")
-    setattr(pipeline, k_, _val(v_))
+    setattr(*_owner(k_), _val(v_))
 pipeline.LINK_X_CROSS = a.cross or pipeline.LINK_X_CROSS
 if a.arms:  # named arms: each sets some pipeline constants
     arms = [dict(kv.split("=") for kv in arm.split(",") if kv) for arm in a.arms.split(";")]
@@ -51,15 +56,15 @@ for k in keys:
         saved = {}
         if arms is not None:
             for k_, v_ in arms[vi].items():
-                saved[k_] = getattr(pipeline, k_)
-                setattr(pipeline, k_, _val(v_))
+                saved[k_] = getattr(*_owner(k_))
+                setattr(*_owner(k_), _val(v_))
             name = x
         else:
             pipeline.LINK_X_TIE = x
             name = f"x{x:g}"
         res = pipeline.analyse(md, pipeline.Options())
         for k_, v_ in saved.items():
-            setattr(pipeline, k_, v_)
+            setattr(*_owner(k_), v_)
         od = dst / name / k
         od.mkdir(parents=True, exist_ok=True)
         (od / "result.json").write_text(json.dumps(res, default=pipeline._json_default))

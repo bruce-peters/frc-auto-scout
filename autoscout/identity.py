@@ -243,12 +243,15 @@ def _mean_dist(sa: Segment, sb: Segment, a: float, b: float) -> float:
 
 
 def assign_absent(segs: list[Segment], evidence: dict[int, np.ndarray], switch_cost: float = 0.6,
-                  absent_cost=(np.inf, np.inf, np.inf), near_m: float = 0.0, near_bonus: float = 0.0
+                  absent_cost=(np.inf, np.inf, np.inf), near_m: float = 0.0, near_bonus: float = 0.0,
+                  far_m: float = 0.0, far_cost: float = 0.0
                   ) -> tuple[dict[int, int], dict[int, list[tuple[float, float]]]]:
     """Like assign(), but a team may have no segment (absent) at absent_cost[team] per epoch (inf = never).
 
     near_bonus is added per epoch to states that give two concurrent segments less than near_m apart the
-    same label (co-located tracks are one robot seen twice). Returns ({segment id: team index},
+    same label (co-located tracks are one robot seen twice). far_cost is subtracted per epoch from states that
+    give two concurrent segments more than far_m apart the same label: one robot cannot be in two places, so by
+    elimination the other track is a team without one. Returns ({segment id: team index},
     {team index: [(t0, t1), ...] stretches in which the team is absent}).
     """
     eps = _epochs(segs)
@@ -267,10 +270,14 @@ def assign_absent(segs: list[Segment], evidence: dict[int, np.ndarray], switch_c
             ev = evidence.get(seg.id)
             if ev is not None:
                 e += np.asarray(ev, float)[_M27[:, slot]]
-        if near_m > 0 and near_bonus:
+        if (near_m > 0 and near_bonus) or (far_m > 0 and far_cost):
             for p in _PAIRS:
-                if p[0] in active and p[1] in active and _mean_dist(active[p[0]], active[p[1]], a, b) < near_m:
-                    e += near_bonus * _SAME27[p]
+                if p[0] in active and p[1] in active:
+                    dm = _mean_dist(active[p[0]], active[p[1]], a, b)
+                    if near_m > 0 and near_bonus and dm < near_m:
+                        e += near_bonus * _SAME27[p]
+                    elif far_m > 0 and far_cost and dm > far_m:
+                        e -= far_cost * _SAME27[p]
         return e
 
     score[0] = emit(*eps[0])

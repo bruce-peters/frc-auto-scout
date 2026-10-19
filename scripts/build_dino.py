@@ -5,7 +5,7 @@ the needed frames from the match video, crops the robot (letterboxed to a square
 it with frozen DINOv2 ViT-S/14 (CLS token + mean patch token, L2-normalised). Runs on CPU so it
 does not compete with GPU training. Writes <dir>/<match>/dino.npz with `ids` and `feats`.
 
-    python scripts/build_dino.py                  # all matches in data/eval_snapshot and output/
+    python scripts/build_dino.py                  # all matches in output/
     python scripts/build_dino.py --workers 4 --size 112
 """
 from __future__ import annotations
@@ -102,7 +102,7 @@ def main():
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--threads", type=int, default=5)
     ap.add_argument("--size", type=int, default=112)
-    ap.add_argument("--dirs", nargs="*", default=[str(ROOT / "data" / "eval_snapshot"), str(ROOT / "output")])
+    ap.add_argument("--dirs", nargs="*", default=[str(ROOT / "output")])
     ap.add_argument("--matches", nargs="*", default=[])
     a = ap.parse_args()
     keys = a.matches or sorted({p.parent.name for d in a.dirs for p in Path(d).glob("*/scan.pkl")})

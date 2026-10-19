@@ -46,7 +46,7 @@ const S = {
   color: {}, alliance: {},
   detTimes: [], detGroups: new Map(),
   counts: { red: [], blue: [] },
-  layers: { boxes: true, unassigned: true, shots: true, alltracks: false, credit: true, counters: true, segids: false, views: false, solo: false },
+  layers: { boxes: true, unassigned: true, inferred: true, shots: true, alltracks: false, credit: true, counters: true, segids: false, views: false, solo: false },
   tracks: null, tracksKey: null, entries: null, entriesKey: null,
   sel: { det: null, seg: null, team: null },
   ocr: null, ocrLoading: false,
@@ -492,16 +492,17 @@ function drawOverlay() {
     for (const i of currentGroup()) {
       const r = D.dets[i]; if (!visibleDet(r)) continue;
       const [, , x0, y0, x1, y1, , team, sid] = r;
-      const col = team != null ? S.color[team] : "#9a9a9a";
+      const inf = team == null && S.layers.inferred ? (r[10] ?? null) : null;  // team by elimination
+      const col = (team ?? inf) != null ? S.color[team ?? inf] : "#9a9a9a";
       const selected = S.sel.det === i || (S.sel.seg != null && sid === S.sel.seg) || (S.sel.team != null && team === S.sel.team && !S.layers.solo);
       const bad = sid != null && S.contradicted.has(`${r[6]}:${sid}`);
       ctx.lineWidth = selected ? 7 : 4; ctx.strokeStyle = col;
       if (team == null) ctx.setLineDash([12, 8]);
       ctx.strokeRect(x0 * sx, y0 * sy, (x1 - x0) * sx, (y1 - y0) * sy); ctx.setLineDash([]);
       if (bad) { ctx.lineWidth = 2; ctx.strokeStyle = C.neg; ctx.strokeRect(x0 * sx - 6, y0 * sy - 6, (x1 - x0) * sx + 12, (y1 - y0) * sy + 12); }
-      let txt = team != null ? String(team) : "?";
+      let txt = (team ?? inf) != null ? String(team ?? inf) : "?";
       if (S.layers.segids && sid != null) txt += ` s${sid}`;
-      label(ctx, txt, x0 * sx - (selected ? 3.5 : 2), y0 * sy - (selected ? 3.5 : 2), col, px(13));
+      (inf != null ? labelInferred : label)(ctx, txt, x0 * sx - (selected ? 3.5 : 2), y0 * sy - (selected ? 3.5 : 2), col, px(13));
     }
   }
   if (S.layers.alltracks && S.tracks) {
@@ -526,17 +527,23 @@ function drawOverlay() {
       }
     }
   }
+  const plates = [];  // launch-point number plates drawn this frame: a volley gets one per team and spot
   if (S.layers.shots) {
     const offs = Object.fromEntries(D.views.map((w) => [w.name, [w.box[0] * sx, w.box[1] * sy]]));
     ctx.lineCap = "round";
-    for (const sh of D.result.shots) {
+    for (const sh of launches()) {
       if (sh.t > vt || vt > sh.t + 0.8) continue;
-      if (S.layers.solo && S.sel.team != null && sh.team !== S.sel.team) continue;
+      const tm = shotTeam(sh);
+      if (S.layers.solo && S.sel.team != null && tm !== S.sel.team) continue;
       const [ox, oy] = offs[sh.view] || [0, 0];
       const pts = sh.pts.filter((p) => p[0] <= vt); if (pts.length < 2) continue;
-      ctx.strokeStyle = sh.team != null ? S.color[sh.team] : "#ffffff"; ctx.lineWidth = 5;
+      const inf = shotInferred(sh);
+      ctx.strokeStyle = tm != null ? S.color[tm] : "#ffffff"; ctx.lineWidth = 5;
+      if (inf) ctx.setLineDash([10, 7]);
       ctx.beginPath(); pts.forEach((p, k) => (k ? ctx.lineTo(p[1] + ox, p[2] + oy) : ctx.moveTo(p[1] + ox, p[2] + oy))); ctx.stroke();
+      ctx.setLineDash([]);
       const last = pts[pts.length - 1]; ctx.fillStyle = ctx.strokeStyle; ctx.beginPath(); ctx.arc(last[1] + ox, last[2] + oy, 7, 0, 7); ctx.fill();
+      if (inf && tm != null) plateOnce(plates, labelInferred, ctx, String(tm), pts[0][1] + ox + 6, pts[0][2] + oy - 4, S.color[tm], px(9));
     }
   }
   if (S.layers.credit && S.jumps?.length) {
@@ -548,16 +555,17 @@ function drawOverlay() {
     if (fj) {
       const offs = Object.fromEntries(D.views.map((w) => [w.name, [w.box[0] * sx, w.box[1] * sy]]));
       ctx.lineCap = "round";
-      for (const sh of D.result.shots) {
+      for (const sh of launches()) {
         if (sh.alliance !== fj.al || sh.t < fj.vt - LAG_HI || sh.t > fj.vt - LAG_LO || sh.pts.length < 2) continue;
-        if (S.layers.solo && S.sel.team != null && sh.team !== S.sel.team) continue;
-        const [ox, oy] = offs[sh.view] || [0, 0], col = sh.team != null ? S.color[sh.team] : "#ffffff";
+        const tm = shotTeam(sh), inf = shotInferred(sh);
+        if (S.layers.solo && S.sel.team != null && tm !== S.sel.team) continue;
+        const [ox, oy] = offs[sh.view] || [0, 0], col = tm != null ? S.color[tm] : "#ffffff";
         ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.globalAlpha = 0.9;
-        if (sh.team == null) ctx.setLineDash([8, 6]);
+        if (tm == null || inf) ctx.setLineDash([8, 6]);
         ctx.beginPath(); sh.pts.forEach((p, k) => (k ? ctx.lineTo(p[1] + ox, p[2] + oy) : ctx.moveTo(p[1] + ox, p[2] + oy))); ctx.stroke();
         ctx.setLineDash([]); ctx.globalAlpha = 1;
         const p0 = sh.pts[0]; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(p0[1] + ox, p0[2] + oy, 5, 0, 7); ctx.fill();
-        label(ctx, sh.team != null ? String(sh.team) : "?", p0[1] + ox + 6, p0[2] + oy - 4, col, px(9));
+        plateOnce(plates, inf ? labelInferred : label, ctx, tm != null ? String(tm) : "?", p0[1] + ox + 6, p0[2] + oy - 4, col, px(9));
       }
     }
     // credit landing: for POP_S after a scoreboard jump, "+balls" rises above every box of each team it went to
@@ -577,6 +585,35 @@ function drawOverlay() {
       }
     }
   }
+}
+
+// launches drawn on the video: the counted ones, plus (layer "Inferred teams") the box-less arcs process of
+// elimination would give a team while that is switched off in the pipeline (result.inferred_shots, not counted)
+function launches() {
+  const r = S.D.result;
+  return S.layers.inferred && r.inferred_shots?.length ? r.shots.concat(r.inferred_shots) : r.shots;
+}
+function shotTeam(sh) { return sh.team ?? (S.layers.inferred ? (sh.elim_team ?? null) : null); }
+function shotInferred(sh) { return !!sh.inferred || (sh.team == null && S.layers.inferred && sh.elim_team != null); }
+
+// a launch-point plate, skipped when the same number (same style) is already drawn within ~2 plate heights
+function plateOnce(plates, fn, ctx, txt, x, y, col, size) {
+  const near = 2.4 * size;
+  if (plates.some((q) => q.txt === txt && q.fn === fn && Math.abs(q.x - x) < near && Math.abs(q.y - y) < near)) return;
+  plates.push({ txt, fn, x, y });
+  fn(ctx, txt, x, y, col, size);
+}
+
+// a team worked out by process of elimination, not seen: the plate drawn hollow, outline and number in its colour
+function labelInferred(ctx, txt, x, y, col, size) {
+  ctx.font = `700 ${size}px ${C.display}`; const w = ctx.measureText(txt).width;
+  const ph = Math.round(size * 1.3), pw = w + size * 0.7;
+  ctx.fillStyle = C.ground; ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, size / 7); ctx.setLineDash([]);
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y - ph, pw, ph, 4); else ctx.rect(x, y - ph, pw, ph);
+  ctx.globalAlpha = 0.85; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
+  ctx.fillStyle = col; ctx.textBaseline = "alphabetic";
+  ctx.fillText(txt, x + size * 0.35, y - ph * 0.22);
 }
 
 // a bumper plate sitting on the box's top-left corner: the box colour as the fill, the number in near-black
@@ -760,7 +797,6 @@ function renderSelection() {
     const st = S.teamStats[team];
     html += `<div>Team</div><div>${plate(team, S.color[team])}${st.al}</div>
              <div>Fuel credited</div><div><b>${fmt(st.fuel)}</b> &nbsp;<span class="muted">OPR split ${fmt(st.oprShare)} · OPR ${fmt(st.opr)}</span></div>
-             <div>Video only</div><div>${fmt(st.video)} &nbsp;<span class="muted">${Math.abs(st.fuel - st.video) >= 0.5 ? `the OPR pull moved it ${st.fuel > st.video ? "+" : "−"}${fmt(Math.abs(st.fuel - st.video))}` : "the OPR pull did not move it"}</span></div>
              <div>Launches seen</div><div>${st.shots}</div><div>Tracked</div><div>${fmt(st.tracked)} s</div>`;
   } else html += `<div>Team</div><div class="muted">unlabelled</div>`;
   if (seg != null) html += segInfo(seg);
@@ -806,10 +842,10 @@ function renderSub() {
   const body = $("#sub-body"); const D = S.D; if (!D) return;
   renderTabCounts();
   if (S.sub === "teams") {
-    let h = `<table><thead><tr><th>Team</th><th>Alliance</th><th title="Best estimate: video split, pulled partly toward fuel OPR">Fuel</th><th title="Split from the video evidence alone">Video only</th><th>OPR-split</th><th>Fuel OPR</th><th>Auto</th><th>Teleop</th><th>Launches seen</th><th>Tracked</th><th>Tower (auto/end)</th><th>Points</th></tr></thead><tbody>`;
+    let h = `<table><thead><tr><th>Team</th><th>Alliance</th><th title="From this match's video alone">Fuel</th><th>OPR-split</th><th>Fuel OPR</th><th>Auto</th><th>Teleop</th><th>Launches seen</th><th>Tracked</th><th>Tower (auto/end)</th><th>Points</th></tr></thead><tbody>`;
     for (const al of ["red", "blue"]) for (const t of D.tba[al] || []) {
       const st = S.teamStats[t]; const auto = st.per.auto || 0; const tele = Object.entries(st.per).filter(([k]) => k !== "auto").reduce((a, [, v]) => a + v, 0);
-      h += `<tr data-team="${t}"><td>${plate(t, S.color[t])}</td><td>${al}</td><td>${fmt(st.fuel)}</td><td>${fmt(st.video)}</td><td>${fmt(st.oprShare)}</td><td>${fmt(st.opr)}</td><td>${fmt(auto)}</td><td>${fmt(tele)}</td><td>${st.shots}</td><td>${fmt(st.tracked)} s</td><td>${st.tower}</td><td>${fmt(st.points)}</td></tr>`;
+      h += `<tr data-team="${t}"><td>${plate(t, S.color[t])}</td><td>${al}</td><td>${fmt(st.fuel)}</td><td>${fmt(st.oprShare)}</td><td>${fmt(st.opr)}</td><td>${fmt(auto)}</td><td>${fmt(tele)}</td><td>${st.shots}</td><td>${fmt(st.tracked)} s</td><td>${st.tower}</td><td>${fmt(st.points)}</td></tr>`;
     }
     body.innerHTML = h + "</tbody></table>";
     body.querySelectorAll("tr[data-team]").forEach((tr) => (tr.onclick = () => selectTeam(+tr.dataset.team)));
@@ -829,7 +865,7 @@ function renderSub() {
   } else if (S.sub === "shots") {
     let h = `<table><thead><tr><th>Match time</th><th>Team</th><th>View</th><th>Linked by</th><th>Toward own hub</th><th>Weight</th></tr></thead><tbody>`;
     for (const sh of [...D.result.shots].sort((a, b) => a.t - b.t)) {
-      h += `<tr data-t="${sh.t}"><td>${fmt(toMT(sh.t), 2)}</td><td>${sh.team != null ? plate(sh.team, S.color[sh.team]) : "?"}</td><td>${sh.view}</td><td>${sh.how === "box" ? "robot box in same view" : sh.how === "proj" ? "robot tracked in another view" : sh.how}</td><td>${sh.toward == null ? "–" : sh.toward ? "yes" : "no (pass?)"}</td><td>${fmt(sh.conf, 2)}</td></tr>`;
+      h += `<tr data-t="${sh.t}"><td>${fmt(toMT(sh.t), 2)}</td><td>${sh.team != null ? plate(sh.team, S.color[sh.team]) : "?"}</td><td>${sh.view}</td><td>${sh.inferred ? (sh.how === "elim" ? "no box: by elimination" : "unlabelled box: by elimination") : sh.how === "box" ? (sh.elim_team != null ? `unlabelled box (elimination says ${sh.elim_team}, not counted)` : "robot box in same view") : sh.how === "proj" ? "robot tracked in another view" : sh.how}</td><td>${sh.toward == null ? "–" : sh.toward ? "yes" : "no (pass?)"}</td><td>${fmt(sh.conf, 2)}</td></tr>`;
     }
     body.innerHTML = h + "</tbody></table>";
     body.querySelectorAll("tr[data-t]").forEach((tr) => (tr.onclick = () => seekVT(+tr.dataset.t - 0.3)));
@@ -842,7 +878,7 @@ function renderSub() {
 }
 
 // ---------------------------------------------------------------- shooter labelling
-const LAB_HIDE = ["boxes", "unassigned", "shots", "alltracks", "entries", "credit", "segids", "solo"];
+const LAB_HIDE = ["boxes", "unassigned", "inferred", "shots", "alltracks", "entries", "credit", "segids", "solo"];
 
 async function toggleLabel(on) {
   const L = S.label; L.on = on ?? !L.on;

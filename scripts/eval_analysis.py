@@ -1,6 +1,6 @@
 """Evaluate the analysis stage (tracking, identity, attribution) on frozen cached scans.
 
-Runs pipeline.analyse() in memory on every data/eval_snapshot/<match>/scan.pkl (never writes
+Runs pipeline.analyse() in memory on every output/<match>/scan.pkl (never writes
 to output/), in parallel, and reports:
 
 * identity: held-out bumper-OCR agreement (identities assigned from half the reads, scored on
@@ -26,7 +26,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-SNAP = ROOT / "data" / "eval_snapshot"
+SNAP = ROOT / "output"  # the current scans (data/eval_snapshot, a copy from 2026-10-17, was removed)
 TRAIN_EVENTS = {"2026casnv", "2026joh"}
 
 _PARAMS: list[str] = []
@@ -104,7 +104,7 @@ def main():
     ap.add_argument("--matches", nargs="*", default=[])
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--save")
-    ap.add_argument("--snap", default=None, help="directory of <match>/scan.pkl (default data/eval_snapshot)")
+    ap.add_argument("--snap", default=None, help="directory of <match>/scan.pkl (default output/)")
     ap.add_argument("--ocr_cache", default=None, help="directory of <match>.pkl bumper-read caches to merge")
     a = ap.parse_args()
     if a.snap:

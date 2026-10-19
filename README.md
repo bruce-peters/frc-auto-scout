@@ -76,9 +76,9 @@ fuel tally per team). Ready-made examples are in `output/videos/`.
    A robot no camera can see cannot show launch arcs, so a hidden in-zone robot is credited as if
    it had 2 launches per window (`attribution.HIDDEN`), while one in plain view launching nothing
    gets almost nothing; arcs rising from where a hidden robot is interpolated to be are traced to it.
-   The weights come from a small model fitted to FRC 5026's human scouting (`models/attr_model.json`),
-   which also pulls each team's match share partly toward its fuel OPR. `result.json` keeps the pure
-   video split as `fuel_video`.
+   The weights come from a small model fitted once to FRC 5026's human scouting (`models/attr_model.json`).
+   It uses only that match's video: no OPR or other team history moves balls between teams.
+   `result.json` also keeps the older hand-tuned split as `fuel_video`.
 6. **Points** — fuel points + tower points from TBA's per-robot breakdown.
 
 ## Tests

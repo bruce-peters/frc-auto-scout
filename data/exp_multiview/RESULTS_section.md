@@ -23,7 +23,10 @@ Chezy views disagree about points in the air by roughly 0.1-0.5 m.
 * **Hidden robots.** It does reach robots with no box: on the 1,028 judged launches whose shooter had no box in
   the view, it credits the right one in up to 17 % (today: 0 %). It loses as many elsewhere, so the launches with
   a teammate behind the 2-D winner stay at 59.9 → 58.4-60.6 % (CIs span 0).
-* **Fuel vs 5026's scouting** (54 Chezy quals, paired bootstrap): see the A/B table below. TBD
+* **Fuel vs 5026's scouting** (54 scouted Chezy quals, paired by match): neither arm moves per-team fuel.
+  * Strict relink (6 px): video-only MAE +0.08 (CI −0.23 .. +0.40).
+  * Soft term (λ = 0.01): −0.08 (−0.33 .. +0.17).
+  * 254's burst check is unchanged in both.
 * **Recommendation: don't adopt.** Nothing to port. `autoscout/triangulate.py` stays an experimental module.
   The precondition for another try is a consistent 3-D calibration of all three views (below).
 
@@ -55,8 +58,9 @@ Launch tracks are the `fuel.is_shot` tracks of every view (55,347). Credited lau
 
 ### Are the pairs real? (cc_qm24 unless noted; `tools/selfcal_test.py`, `tools/long_pairs.py`, `tools/diag_offset.py`)
 
-* **The code is right.** A synthetic ball through the real qm24 blue_end and main cameras is recovered to 0.005 px,
-  the path to 1e-4, and the launch point to ±5 cm.
+* **The code is right** (`tools/synth_check.py`). Synthetic balls through the real qm24 blue_end and main cameras
+  are recovered to 0.005 px and launch points to < 1 mm. With 2 px of image noise the launch points are still
+  within 0.4-2.5 cm.
 * **Chance level.** Shifting every main track by 7.007 s (a whole number of frames) keeps the search identical but
   removes every true pair. qm24 blue_end launch tracks with a main partner (least-squares fit on the common
   instants, every candidate within 0.6 m):
@@ -168,7 +172,48 @@ margin of 2; otherwise today's pick stands. Stored (zero-context) cameras:
 
 ### Against 5026's scouting (`tools/ab_mv.py`, 54 scouted Chezy quals)
 
-TBD
+All arms ran in one process on the same scans: pipeline.py 21a4195ff904, credit model 553b145d9546, triangulate.py
+63c5e4db4188. The baseline is the unhooked analysis and reproduces today's 47.99 / 40.89. Paired bootstrap over
+matches, 95 % CI:
+
+| arm | video-only fuel MAE | video-only corr | top scorer (video only) | best-estimate MAE | burst |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| today | 47.99 | 0.830 | 63 % | 40.89 | 63.8 % |
+| strict relink (fits both views to 6 px, gated) | 48.07 | 0.830 | 62 % | 41.01 | 63.9 % |
+| paired diff | +0.08 [−0.23, +0.40] | −0.000 [−0.003, +0.002] | −1.0 pp [−1.7, 0] | +0.12 [−0.18, +0.45] | |
+| soft term (main 8 / end 4 px, λ = 0.01 by LOMO) | 47.91 | 0.830 | 64 % | 40.87 | 63.8 % |
+| paired diff | −0.08 [−0.33, +0.17] | +0.000 [−0.001, +0.002] | +1.0 pp [0, +1.7] | −0.03 [−0.22, +0.16] | |
+
+* **Strict relink** (`Relink`, inserted just before the "no robot" exit of the launch loop).
+  * Whether a launch counts is decided as today; only its robot can change, to any of the six robots, boxed or
+    not.
+  * Of 12,707 credited launches, 680 have an accepted fit and 498 pass the gate. 96 change robot.
+  * 16 matches better, 18 worse.
+* **Soft term** (`SoftTerm`, at the launch-to-box candidate step via `data/exp_arcs/tools/arc_hook.py`).
+  * Gate decided on the 2-D winner, as the arc work recommends.
+  * It changes 49 of the 1,025 contested launches that have a fit. 18 matches better, 10 worse.
+* **254 burst check** (`team_volleys.py 254 --out ab/<arm>`), the same in all three arms:
+  * 1,159 jumps, 3,846 balls on its alliance's counter; scouts give 254 1,606.
+  * Credit gives it 1,772 (today and soft) or 1,768 (relink).
+  * 63 jumps / 152 balls where scouts say ≥ 60 % 254 and credit is > 0.3 lower.
+* **Arms not run.** A first run with six arms was stopped at the main session's request to free shared CPU. Its
+  partial log is `ab_log_stopped_6arms.txt`. The other four arms were the looser relink, a second soft rule and
+  two landmark-camera arms; none had a truth-set gain with a CI above zero on both contested sets.
+
+### Recommendation
+
+**Don't adopt. Port nothing into `pipeline.py` / `attribution.py`.**
+
+* On today's calibrations no variant beats the 2-D link on both contested truth sets with a CI above zero, and
+  per-team fuel doesn't move.
+* `autoscout/triangulate.py` stays as an experimental module, not imported by the pipeline.
+* **If a consistent 3-D calibration exists later**, the piece to port is the soft term, not the outright relink:
+  * Code: `triangulate.MultiView.candidates` → `fit_pair` → `launch_point`, then λ · Mahalanobis² per close box,
+    added to the score in `pipeline.analyse` step (1) after the zone rule.
+  * The launch gate stays decided on the 2-D winner.
+  * Reference implementation: `SoftTerm` in `data/exp_multiview/tools/ab_mv.py`, with rule "main 8 / end 4 px"
+    and λ re-chosen by leave-one-match-out.
+  * Re-test first with `mv_pairs.py` → `eval_mv.py` / `eval_soft.py`.
 
 ### Method (`autoscout/triangulate.py`, tools in `data/exp_multiview/tools/`)
 
@@ -205,7 +250,7 @@ TBD
      About 15 s per match. Output `pairs/<match>.pkl`, or `pairs_lm/` with `--lm`.
   2. `eval_mv.py`, `eval_soft.py`, `eval_same.py`, `eval_hidden_mv.py`, `coverage.py`, `diag_*.py`: offline,
      from the pairs and the `data/exp_arcs` logs.
-  3. `ab_mv.py`: in-memory A/B (below).
+  3. `ab_mv.py`: in-memory A/B (above). About 13 s per arm per match, CPU only.
 * **Constants not tuned to the truth sets.** The acceptance rules are a small fixed grid; σ_robot, the gate and
   the margin were set before scoring. λ of the soft term is chosen by leave-one-match-out.
 

@@ -97,3 +97,12 @@ def test_split_at_jumps_cuts_a_hop_to_another_ball():
     tr = fuel.FlightTrack(1, pts)
     out = fuel.split_at_jumps([tr])
     assert len(out) == 2 and len(out[0].pts) == 8 and len(out[1].pts) == 8
+
+
+def test_ballistic_tracker_scales_seeding_to_60hz():
+    # the same stream sampled at 60 Hz: per-frame steps halve, the tracker must still seed every ball
+    frames = _stream(fps=60.0)
+    bt = fuel.BallisticTracker()
+    for t, b in frames:
+        bt.update(t, b)
+    assert _smooth_rising(bt.flush()) >= 10

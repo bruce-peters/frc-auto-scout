@@ -28,3 +28,7 @@ event may be used as they happen, and fixed models trained once on past data are
   prior from qm1, and the model now leans on it more (OPR power 0.29 → 0.55).
 * **Caveat:** Chezy is an offseason event, so every team has earlier events. In week 1 of a new season
   there is no season history, and the prior falls back to the in-event OPR (v7 row).
+
+**Update (later on 2026-10-18).** The fuel-OPR / season prior was taken out of the credit split altogether:
+per-team numbers now come from each match's own video only (`data/exp_season/RESULTS_section.md`, "Removed
+from the default"). The no-hindsight requirement now applies to the DINO probe and the camera priors.

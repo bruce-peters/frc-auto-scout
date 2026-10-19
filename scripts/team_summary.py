@@ -73,21 +73,19 @@ def main():
     plt.close(fig)
     lines = [f"# Team {team} — video scouting summary", "",
              f"![auto paths](team_{team}_autos.png)", "",
-             "fuel scored = best estimate (credit model, pulled toward fuel OPR); video only shows breakout or "
-             "off matches more clearly.", "",
-             "| match | alliance | fuel scored | video only | auto fuel | tower (auto/end) | points | alliance fuel (TBA) | team fuel OPR |",
-             "| --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: |"]
+             "fuel scored = from that match's video alone (no OPR or team history); team fuel OPR for reference.", "",
+             "| match | alliance | fuel scored | auto fuel | tower (auto/end) | points | alliance fuel (TBA) | team fuel OPR |",
+             "| --- | --- | ---: | ---: | --- | ---: | ---: | ---: |"]
     for x in rows:
-        lines.append(f"| {x['match']} | {x['alliance']} | {x['fuel']:.0f} | {x['fuel_video']:.0f} | {x['auto']:.0f} | {x['tower']} | "
+        lines.append(f"| {x['match']} | {x['alliance']} | {x['fuel']:.0f} | {x['auto']:.0f} | {x['tower']} | "
                      f"{x['points']:.0f} | {x['alliance_fuel']} | {x['opr']:.0f} |")
     if rows:
         by_ev = {}
         for x in rows:
             by_ev.setdefault(x["match"].split("_")[0], []).append(x)
-        lines += ["", "| event | matches | avg fuel | avg fuel (video only) | fuel OPR |", "| --- | ---: | ---: | ---: | ---: |"]
+        lines += ["", "| event | matches | avg fuel | fuel OPR |", "| --- | ---: | ---: | ---: |"]
         for ev, xs in by_ev.items():
-            lines.append(f"| {ev} | {len(xs)} | {np.mean([x['fuel'] for x in xs]):.0f} | "
-                         f"{np.mean([x['fuel_video'] for x in xs]):.0f} | {xs[0]['opr']:.0f} |")
+            lines.append(f"| {ev} | {len(xs)} | {np.mean([x['fuel'] for x in xs]):.0f} | {xs[0]['opr']:.0f} |")
     (config.OUTPUT / f"team_{team}.md").write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines[-12:]))
 

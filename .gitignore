@@ -19,5 +19,6 @@ data/**
 !data/**/
 !data/exp_*/*.md
 !data/exp_*/tools/*.py
+!data/exp_launch/prod_signals.py
 !data/labels/*.json
 # data/scouting/: 5026's scouting export stays local (not in the public repo)

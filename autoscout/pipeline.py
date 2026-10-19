@@ -65,7 +65,8 @@ def _match_counts(tl, al: str, hub: dict | None) -> list:
 NO_HINDSIGHT = True
 # ... and with no hindsight, shrink that in-event OPR toward each team's fuel OPR at its earlier events of the
 # season (autoscout.season.prior_oprs; data/exp_season/RESULTS_section.md), which also gives a prior at qm1.
-# Credit model refit with it (no hindsight, nested CV): fuel MAE vs 5026's scouting 44.2 -> 41.9.
+# Unused by default since 2026-10-18: per-team fuel must come from the match's own video only (Bruce), so the
+# deployed credit model has no OPR prior (g_opr 0) and prior_opr is never called.
 SEASON_PRIOR = True
 _EVENT_OPR: dict[str, dict] = {}
 
@@ -232,11 +233,15 @@ class FuelScan:
     def __init__(self, md: "MatchData", W: int, H: int, fps: float, opts: Options, keep_blobs: bool = False):
         self.md, self.W, self.H, self.fps = md, W, H, fps
         self.vlist = views.PRODUCTIONS[md.prod]
-        self.step = max(1, opts.fuel_step)
-        self.kb = max(1, opts.fuel_k // self.step)  # neighbour offset in buffered (sub-sampled) frames
+        # fuel_step / fuel_k are in 60 fps frames: scale them to the video's own rate, so a 30 fps broadcast is still
+        # analysed at 30 Hz (every frame) instead of 15 Hz
+        scale = (fps / 60.0) if fps and fps > 1 else 1.0
+        self.step = max(1, round(opts.fuel_step * scale))
+        self.kb = max(1, round(opts.fuel_k * scale) // self.step)  # neighbour offset in buffered (sub-sampled) frames
         self.buf = deque(maxlen=2 * self.kb + 1)  # (idx, frame, gray, yellow) of sub-sampled frames
+        gate = 45.0 * (self.step / scale) ** 0.7  # the tracker gate grows with the time between analysed frames
         self.trackers = {v.name: (fuel.BallisticTracker() if opts.flight_tracker == "ballistic"
-                                  else fuel.FlightTracker(gate=45.0 * opts.fuel_step ** 0.7)) for v in self.vlist}
+                                  else fuel.FlightTracker(gate=gate)) for v in self.vlist}
         self.valid = {}
         for v in self.vlist:
             x0, y0, x1, y1 = v.scaled(W, H)
@@ -698,11 +703,26 @@ RISE_ABOVE_MIN = 0.6     # the arc must climb at least this many box heights abo
 INBOX_MAX = 0.5          # at most this fraction of the arc inside the robot's own box
 # Dense volleys: the greedy flight tracker chains one ball onto the next, so a stream becomes a few long zigzag
 # tracks that fail the projectile tests (2026cc_qm24 70-74 s, main view: 0 of ~117 tracks near 254 were shots).
-SPLIT_TRACKS = False     # cut stored tracks where they hop to another ball (fuel.split_at_jumps) before the tests
+SPLIT_TRACKS = True      # cut stored tracks where they hop to another ball (fuel.split_at_jumps) before the tests
 # ... and a split piece is first seen mid-air: gate on where the arc, traced back along its initial velocity,
-# crossed the box top (within GATE_TRACE_S s) instead of on its first sighting
-GATE_TRACE = False
+# crossed the box top (within GATE_TRACE_S s) instead of on its first sighting. Both on since 2026-10-18 with the
+# credit model refit on the resulting launches (data/exp_split/RESULTS_section.md): sole-shooter recall in 20+
+# ball volleys ~0.2 -> ~0.7, and vs 5026's scouting nested-CV fuel MAE 41.9 -> 38.8 (paired CI -6.0 .. -0.04)
+GATE_TRACE = True
 GATE_TRACE_S = 0.3
+# A ball launched while its robot stands outside its own alliance zone in teleop cannot score (G407): a pass or a
+# feed. Such launches count LAUNCH_ZONE_WEIGHT as much (1 = off, 0 = dropped); "outside" = robot centre more than
+# LAUNCH_ZONE_MARGIN m beyond its zone line (position noise). ~20 % of teleop launches at Chezy are. On since
+# 2026-10-18 (Bruce's rule; vs scouting with the evidence-only credit model refit: fuel MAE -0.15, CI -0.7 .. +0.4,
+# 35 of 54 matches better; it replaces most of the robot-level zone gate, gz 0.27 -> 0.10)
+LAUNCH_ZONE_WEIGHT = 0.0
+LAUNCH_ZONE_MARGIN = 1.0
+# Stacked robots in one view (one box just below another, e.g. 3847 in front of 254 in the Chezy main camera): an
+# arc traced back in time crosses the upper robot's top first and would carry on down to the lower one's. Credit
+# the first box top it crosses (within SIDE_MARGIN of that box and GATE_TRACE_S s) instead of the best score.
+LINK_FIRST_CROSS = False
+LINK_FIRST_CROSS_VIEWS = ("main",)  # the high camera only: in the low end cameras a taller robot BESIDE the shooter
+                                    # has the higher top, and the rule would hand it the ball
 PROJ_RISE_M = 0.8        # arcs linked by projection (no box in this view) must climb this many metres
 TOP_TIEBREAK = 0.5       # between overlapping boxes, prefer the one whose top edge the arc leaves
 OVERLAP_ZONE_RULE = True  # ... and in teleop, between robots of both alliances, the one in its own zone
@@ -711,6 +731,37 @@ OVERLAP_ZONE_RULE = True  # ... and in teleop, between robots of both alliances,
 # MAE 48.8 -> 46.9 (paired 95 % CI -3.0 .. -0.9), data/exp_audit/tools/link_x_ab.py
 LINK_X_TIE = 1.0
 LINK_X_CROSS = True
+# Shooter's box lost for a moment (against the glass, close under an end camera, behind the hub; the visual QA,
+# data/exp_visual_qa/report.md): keep each labelled segment's last box in a view as a link candidate for BOX_HOLD_S
+# s after the detector drops it, BOX_HOLD_PEN box-heights behind a box seen in the launch frame
+BOX_HOLD_S = 1.5
+BOX_HOLD_PEN = 0.3
+# Overlapping boxes (one robot in front of another, or side by side at the hub): prefer the robot whose hopper is
+# emptying, i.e. whose box fill (yellow fraction) fell from the LINK_FILL_WIN s before the launch to the
+# LINK_FILL_WIN s after; score -= LINK_FILL_TIE * drop (visual QA: right in 3 of 3 checked)
+LINK_FILL_TIE = 3.0
+LINK_FILL_WIN = 1.0
+# arcs with no box in the view are linked by projection to the robot whose field position projects within 1 m of
+# the launch point; a hidden robot's interpolated position is rougher, so allow it PROJ_HIDDEN_MAX_M
+PROJ_HIDDEN_MAX_M = 1.0
+# Process of elimination (Bruce). Tracks: two concurrent tracks of one alliance more than IDENT_FAR_M apart cannot
+# be the same robot, so the identity Viterbi pays IDENT_FAR_COST per epoch to label them alike (2026cc_qm17: the
+# DINO probe called 6800's track 6665 too, so 6800 was "absent" and its launches went to 6665). Boxes: a "?" box (no
+# field position, so no track or label: off the calibrated floor at an image edge, far down an end camera) is the
+# one team of its alliance not labelled on another box in the frame and not tracked elsewhere at that moment
+# (tracked = projects more than ELIM_FAR box widths from the box). Adopted 2026-10-19 with BOX_HOLD_S / LINK_FILL_TIE
+# and a refit credit model: 54 scouted Chezy quals, nested CV, fuel MAE 42.4 -> 41.2 (paired -1.2, 95 % CI -3.6 ..
+# +0.7), top scorer 64 -> 69 %, the model's hidden-robot pseudo-shots 9.7 -> 6.2 (data/exp_elim/RESULTS_section.md)
+IDENT_FAR_M = 2.5
+IDENT_FAR_COST = 20.0
+ELIM_BOXES = True
+ELIM_FAR = 1.5
+# ... and an arc with no box or tracked robot near it at all (a robot right under an end camera, behind the hub):
+# launched inside an alliance zone, it is that alliance's one robot not tracked more than ELIM_ARC_M from the
+# launch point (link confidence ELIM_ARC_WEIGHT)
+ELIM_ARCS = True
+ELIM_ARC_M = 2.0
+ELIM_ARC_WEIGHT = 0.6
 
 
 def _box_shot_ok(tr, box, view_h: float = 1e9) -> bool:
@@ -916,7 +967,7 @@ def analyse(md: MatchData, opts: Options) -> dict:
             if not use_absent:
                 return identity.assign(asegs, evd, opts.switch_cost)
             lab, ab = identity.assign_absent(asegs, evd, opts.switch_cost, a_cost, opts.absent_near_m,
-                                             opts.absent_near_bonus)
+                                             opts.absent_near_bonus, IDENT_FAR_M, IDENT_FAR_COST)
             team_absent.update({teams[ti]: [(float(a), float(b)) for a, b in ab.get(ti, [])] for ti in range(3)})
             return lab
         # iterate: OCR(+classifier) labels -> appearance prototypes -> combined evidence
@@ -977,8 +1028,66 @@ def analyse(md: MatchData, opts: Options) -> dict:
             return None
         return p
 
-    shot_list = []
-    n_cross = n_gated = 0
+    # per view, each labelled segment's boxes in time order (BOX_HOLD_S, LINK_FILL_TIE)
+    seg_boxes: dict[str, dict[int, tuple]] = {}
+    if BOX_HOLD_S > 0 or LINK_FILL_TIE:
+        by = {}
+        for d in md.dets:
+            sid = det_seg.get(id(d))
+            if sid is not None:
+                by.setdefault(d.view, {}).setdefault(sid, []).append(d)
+        for v_, segd in by.items():
+            seg_boxes[v_] = {}
+            for sid, ds in segd.items():
+                ds.sort(key=lambda d: d.t)
+                seg_boxes[v_][sid] = (np.array([d.t for d in ds]), ds)
+
+    def fill_drop(view: str, sid, t: float) -> float:
+        e = seg_boxes.get(view, {}).get(sid)
+        if e is None:
+            return 0.0
+        ts, ds = e
+        i0, i1, i2 = np.searchsorted(ts, [t - LINK_FILL_WIN, t, t + LINK_FILL_WIN])
+        pre = [d.fill for d in ds[i0:i1] if d.fill is not None]
+        post = [d.fill for d in ds[i1:i2] if d.fill is not None]
+        return max(0.0, float(np.median(pre) - np.median(post))) if pre and post else 0.0
+
+    def elim_team(d, box, frame_dets, cam, t: float):
+        """The team of a "?" box by elimination (ELIM_BOXES), or None."""
+        cand = set(info.teams(d.alliance))
+        for o in frame_dets:  # labelled on another box of this frame
+            s2 = det_seg.get(id(o))
+            if o is not d and s2 is not None:
+                cand.discard(team_of_seg.get(s2))
+        x0, y0, x1, y1 = box
+        bw = max(x1 - x0, 1.0)
+        for tm in list(cand):  # tracked somewhere this box is not
+            p = team_pos(tm, t)
+            if p is None or not p[2] or cam is None:
+                continue
+            u, v = cam.project(np.array([[p[0], p[1], 0.0]]))[0]
+            if not (np.isfinite(u) and np.isfinite(v)) or np.hypot(u - 0.5 * (x0 + x1), v - y1) > ELIM_FAR * bw:
+                cand.discard(tm)
+        return cand.pop() if len(cand) == 1 else None
+
+    def elim_arc(cam, lu: float, lv: float, t: float):
+        """The shooter of an arc with no robot box or tracked robot near it (ELIM_ARCS), or None: launched inside
+        an alliance zone, by the one robot of that alliance not tracked more than ELIM_ARC_M from the launch."""
+        xy = cam.backproject(np.array([[lu, lv]]), z=0.55)[0]
+        if not np.all(np.isfinite(xy)):
+            return None
+        al_z = [a for a in ("red", "blue") if fieldmod.in_alliance_zone(a, float(xy[0]), 0.0)]
+        if len(al_z) != 1:
+            return None
+        cand = []
+        for tm in info.teams(al_z[0]):
+            p = team_pos(tm, t)
+            if p is None or not p[2] or np.hypot(p[0] - xy[0], p[1] - xy[1]) <= ELIM_ARC_M:
+                cand.append(tm)
+        return cand[0] if len(cand) == 1 else None
+
+    shot_list, inferred_shots = [], []
+    n_cross = n_gated = n_zone_out = n_held = n_elim = n_elim_arc = 0
     for vname, tracks in md.tracks_all.items():
         if SPLIT_TRACKS:
             tracks = fuel.split_at_jumps(tracks)
@@ -999,12 +1108,22 @@ def analyse(md: MatchData, opts: Options) -> dict:
             vu, vv = tr.velocity0()
             lu, lv = u0 - vu * 2 / 60, v0 - vv * 2 / 60
             team, al, conf, how = None, None, 0.0, None
+            inferred, shown = False, None  # team by elimination: used (ELIM_*) / display only
             # (1) robot box in the same view at (nearly) the same time
             if len(tkeys):
                 j = int(np.argmin(np.abs(tkeys - t0)))
-                if abs(tkeys[j] - t0) <= 0.2:
+                frame_dets = list(tdict[tkeys[j]]) if abs(tkeys[j] - t0) <= 0.2 else []
+                held = set()
+                if BOX_HOLD_S > 0:  # segments seen in this view in the last BOX_HOLD_S s but not in this frame
+                    have = {det_seg.get(id(d)) for d in frame_dets}
+                    for sid, (ts, ds) in seg_boxes.get(vname, {}).items():
+                        i = int(np.searchsorted(ts, t0, side="right")) - 1
+                        if sid not in have and i >= 0 and t0 - ts[i] <= BOX_HOLD_S:
+                            frame_dets.append(ds[i])
+                            held.add(id(ds[i]))
+                if frame_dets:
                     cands = []
-                    for d in tdict[tkeys[j]]:
+                    for d in frame_dets:
                         x0, y0, x1, y1 = d.box
                         x0, x1, y0, y1 = x0 - ox, x1 - ox, y0 - oy, y1 - oy
                         bw, bh = x1 - x0, y1 - y0
@@ -1016,12 +1135,20 @@ def analyse(md: MatchData, opts: Options) -> dict:
                         # several boxes can contain the launch point (robots overlap in the image):
                         # prefer the one whose top edge it leaves from
                         score = dist + (TOP_TIEBREAK * abs(v0 - y0) / max(bh, 1) if SHOT_GATE else 0.0)
+                        # back in time to this box's top edge (0 if the first sighting is already below it)
+                        tau = max(-GATE_TRACE_S, min(0.0, (y0 - v0) / vv)) if vv < -1e-6 else 0.0
+                        crossed = (x0 - SIDE_MARGIN * bw <= u0 + vu * tau <= x1 + SIDE_MARGIN * bw
+                                   and (vv < -1e-6 and (y0 - v0) / vv >= -GATE_TRACE_S or v0 >= y0))
                         if LINK_X_TIE:
                             uc = u0
                             if LINK_X_CROSS and vv < -1e-6:  # rising: back in time to this box's top edge
                                 uc = u0 + vu * max(-0.3, min(0.0, (y0 - v0) / vv))
                             score += LINK_X_TIE * abs(uc - 0.5 * (x0 + x1)) / max(bw, 1)
-                        cands.append((score, dist, d, (x0, y0, x1, y1)))
+                        if id(d) in held:
+                            score += BOX_HOLD_PEN
+                        if LINK_FILL_TIE and dist <= 0.6:
+                            score -= LINK_FILL_TIE * fill_drop(vname, det_seg.get(id(d)), t0)
+                        cands.append((score, dist, d, (x0, y0, x1, y1), tau, crossed))
                     # robots of BOTH alliances at the launch point: in teleop a robot can only score from its
                     # own zone, so prefer a candidate standing in it (failure-finder cycle 24: cross-alliance
                     # picks 72 -> 91 % right vs the scouts; shares unchanged, per-launch links right more often)
@@ -1033,8 +1160,12 @@ def analyse(md: MatchData, opts: Options) -> dict:
                                    and fieldmod.in_alliance_zone(c[2].alliance, c[2].xy[0])]
                             if inz:
                                 cands = inz
+                    if LINK_FIRST_CROSS and vname in LINK_FIRST_CROSS_VIEWS:  # the first top crossed, going back
+                        crossed = [c for c in cands if c[1] <= 0.6 and c[5]]
+                        if crossed:
+                            cands = [max(crossed, key=lambda c: c[4])]
                     best, bd, bscore, bbox = None, 1e9, 1e9, None
-                    for score, dist, d, box in cands:
+                    for score, dist, d, box, *_ in cands:
                         if score < bscore:
                             best, bd, bscore, bbox = d, dist, score, box
                     if best is not None and bd <= 0.6 and SHOT_GATE and not _box_shot_ok(tr, bbox, view_h):
@@ -1044,6 +1175,14 @@ def analyse(md: MatchData, opts: Options) -> dict:
                         sid = det_seg.get(id(best))
                         team = team_of_seg.get(sid) if sid is not None else None
                         al, conf, how = best.alliance, float(np.exp(-bd)), "box"
+                        n_held += id(best) in held
+                        if team is None and sid is None:
+                            et = elim_team(best, bbox, frame_dets, cam, t0)
+                            if et is not None and ELIM_BOXES:
+                                team, inferred = et, True
+                                n_elim += 1
+                            else:
+                                shown = et
             # (2) robot tracked in any view: project its field position into this view
             if team is None and cam is not None:
                 best, bd = None, 1e9
@@ -1053,6 +1192,8 @@ def analyse(md: MatchData, opts: Options) -> dict:
                         continue
                     top = cam.project(np.array([[xy[0], xy[1], 0.55]]))[0]
                     d_m = np.hypot(top[0] - lu, top[1] - lv) / max(ppm, 1e-3)
+                    if not xy[2]:  # hidden: in units of its wider radius
+                        d_m /= PROJ_HIDDEN_MAX_M
                     if d_m < bd:
                         best, bd = tm, d_m
                 if best is not None and bd < 1.0 and SHOT_GATE and not _proj_shot_ok(tr, ppm):
@@ -1064,8 +1205,26 @@ def analyse(md: MatchData, opts: Options) -> dict:
                         conf *= FILLED_SHOT_WEIGHT
                         how = "proj_hidden"
                     n_cross += 1
+            if team is None and al is None and cam is not None and _proj_shot_ok(tr, ppm):
+                et = elim_arc(cam, lu, lv, t0)
+                if et is not None and ELIM_ARCS:
+                    team, al, conf, how, inferred = et, alliance_of[et], ELIM_ARC_WEIGHT, "elim", True
+                    n_elim_arc += 1
+                elif et is not None:  # shown in the inspector, not counted
+                    inferred_shots.append({"t": t0, "view": vname, "team": et, "alliance": alliance_of[et],
+                                           "how": "elim", "conf": ELIM_ARC_WEIGHT, "inferred": True,
+                                           "pts": [(round(p[0], 3), round(p[1], 1), round(p[2], 1))
+                                                   for p in tr.pts]})
             if team is None and al is None:
                 continue
+            if LAUNCH_ZONE_WEIGHT < 1.0 and team is not None:  # launched from outside its own zone: not a shot
+                mt_l = tl.match_time(t0)
+                xy = team_pos(team, t0) if (mt_l is not None and mt_l >= config.AUTO_LEN) else None
+                if xy is not None and not fieldmod.in_alliance_zone(al, xy[0], LAUNCH_ZONE_MARGIN):
+                    n_zone_out += 1
+                    if LAUNCH_ZONE_WEIGHT <= 0:
+                        continue
+                    conf *= LAUNCH_ZONE_WEIGHT
             # does the arc head for the shooter's own hub? (passes / feeds usually do not)
             toward = None
             if cam is not None and al is not None:
@@ -1078,7 +1237,24 @@ def analyse(md: MatchData, opts: Options) -> dict:
                     conf *= AWAY_SHOT_WEIGHT
             shot_list.append({"t": t0, "view": vname, "team": team, "alliance": al, "toward": toward,
                               "u": u0, "v": v0, "conf": conf, "how": how,
+                              **({"inferred": True} if inferred else {}),
+                              **({"elim_team": shown} if shown is not None else {}),
                               "pts": [(round(p[0], 3), round(p[1], 1), round(p[2], 1)) for p in tr.pts]})
+
+    # "?" boxes: the team elimination points to (ELIM_BOXES uses it for launches; the inspector shows it, marked)
+    elim_of_det: dict[int, int] = {}
+    for vname, tdict in dets_by_view_t.items():
+        cam_track = md.cams.get(vname)
+        if cam_track is None:
+            continue
+        ox, oy = vlist[vname].offset(W, H)
+        for t, frame in tdict.items():
+            for d in frame:
+                if det_seg.get(id(d)) is None:
+                    x0, y0, x1, y1 = d.box
+                    et = elim_team(d, (x0 - ox, y0 - oy, x1 - ox, y1 - oy), frame, cam_track.at(t), t)
+                    if et is not None:
+                        elim_of_det[id(d)] = et
 
     # ---------------- zone occupancy
     # shooting signals for a version-2 credit model (autoscout/shooting.py): per team, on the TeamSignals grid
@@ -1233,13 +1409,14 @@ def analyse(md: MatchData, opts: Options) -> dict:
         sid = det_seg.get(id(d))
         det_rows.append((round(d.t, 3), d.view, *[round(c, 1) for c in d.box], d.alliance,
                          team_of_seg.get(sid) if sid is not None else None, sid,
-                         None if d.fill is None else round(d.fill, 3)))
+                         None if d.fill is None else round(d.fill, 3), elim_of_det.get(id(d))))
     md.det_rows = det_rows
     return {
         "match": info.key,
         "teams": result_teams,
         "paths": paths,
         "shots": shot_list,
+        "inferred_shots": inferred_shots,  # box-less arcs elimination would give a team (ELIM_ARCS off): display only
         "identity": ident_debug,
         "timeline": {"auto_start": tl.auto_start, "teleop_start": tl.teleop_start, "layout": tl.layout,
                      "counts": tl.counts},
@@ -1249,6 +1426,10 @@ def analyse(md: MatchData, opts: Options) -> dict:
         "fuel_log": fuel_log,
         "n_segments": len(segs),
         "shots_gated": n_gated,
+        "shots_out_of_zone": n_zone_out,
+        "shots_held_box": n_held,
+        "shots_elim_box": n_elim,
+        "shots_elim_arc": n_elim_arc,
         **({"credit_model": attribution.ATTR_MODEL} if attribution.ATTR_MODEL else {}),
         # only with Options.absent_cost* / park_ext
         **({"absent": {t: [[round(a, 2), round(b, 2)] for a, b in iv] for t, iv in team_absent.items() if iv},

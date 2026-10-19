@@ -42,6 +42,12 @@ from autoscout import attribution as A, config, field as fieldmod, fuel, pipelin
 
 BLOBS = Path(os.environ.get("TRACK_BLOBS", str(config.DATA / "exp_fueldet" / "blobs")))  # 60 Hz: data/exp_track/blobs60
 OUT = config.DATA / "exp_track"
+SNAP = OUT / "snap"  # result.json timeline/teams + dets.json copied from output/ before finalize_v9 rewrote it
+
+
+def _read(key: str, name: str):
+    p = SNAP / key / name
+    return json.loads((p if p.exists() else config.OUTPUT / key / name).read_text())
 PAD, EXCL = 0.3, 5.5  # PAD: slack on the launch window
 EP_GAP, LAG_MIN, LAG_MAX = 2.0, 0.8, 5.0  # counter episodes; launch -> count delay (attribution kernel 0.8-5.5 s)
 SAME_T, SAME_U = 0.035, 0.25
@@ -83,6 +89,17 @@ def cluster_blobs(blobs: list, r: float) -> list:
         x1 = max(b.x0 + b.w for b in g); y1 = max(b.y0 + b.h for b in g)
         out.append(fuel.Blob(u, v, float(a.sum()), x1 - x0, y1 - y0, x0, y0))
     return out
+
+
+def load_log(key: str) -> dict:
+    """A blob log (pickle, or gzip-compressed pickle for the 60 Hz logs)."""
+    import gzip
+    p = BLOBS / f"{key}.pkl"
+    if p.exists():
+        with open(p, "rb") as fh:
+            return pickle.load(fh)
+    with gzip.open(BLOBS / f"{key}.pkl.gz", "rb") as fh:
+        return pickle.load(fh)
 
 
 def _blobs(row, source="motion", conf=0.25, cluster=0.0):
@@ -170,22 +187,54 @@ VARIANTS = {
     "ballistic+cl10+split": dict(tracker="ballistic", cluster=10.0, post=["split"]),
     "ballistic+cl16+split": dict(tracker="ballistic", cluster=16.0, post=["split"]),
     "greedy+cl10+split": dict(tracker="greedy", cluster=10.0, post=["split"]),
+    # unsplit versions for the scouting A/B (the pipeline splits stored tracks itself since SPLIT_TRACKS=True)
+    "ballistic+cl10": dict(tracker="ballistic", cluster=10.0),
 }
 
 
+def jump_windows(md, w: float) -> np.ndarray:
+    """[(t0, t1)] spans of W s before every scoreboard increase (both alliances, raw overlay reads)."""
+    ts = []
+    for al, counts in (getattr(md.timeline, "counts", None) or {}).items():
+        last = None
+        for t, c in counts:
+            if last is not None and c > last:
+                ts.append(t)
+            last = c if last is None or c > last else last
+    ts = np.array(sorted(ts))
+    return np.stack([ts - w, ts], axis=1) if len(ts) else np.zeros((0, 2))
+
+
+def hybrid_rows(rows: list, windows: np.ndarray) -> tuple[list, float]:
+    """A 60 Hz log thinned to 30 Hz outside the windows (its even frames are the 30 Hz analysis); share kept at 60."""
+    out, n60 = [], 0
+    for row in rows:
+        t = row[0]
+        inside = bool(len(windows)) and bool(np.any((windows[:, 0] <= t) & (windows[:, 1] >= t)))
+        if inside:
+            out.append(row)
+            n60 += 1
+        elif int(round(t * 60)) % 2 == 0:
+            out.append(row)
+    return out, n60 / max(1, len(rows))
+
+
 def run(name: str, blob_log: dict, md=None, fuel_step: int = 2) -> dict:
-    """Tracks per view for a named variant."""
-    cfg = VARIANTS[name]
+    """Tracks per view for a named variant. Variant names may end in '@hybW' (60 Hz logs only): 60 Hz in the W s
+    before each scoreboard increase, 30 Hz elsewhere."""
+    base, _, hyb = name.partition("@hyb")
+    cfg = VARIANTS[base]
+    windows = jump_windows(md, float(hyb)) if hyb else None
     out = {}
     for vn, rows in blob_log.items():
+        if windows is not None:
+            rows, share = hybrid_rows(rows, windows)
+            run.share60 = share
         if cfg["tracker"] == "greedy":
             tr = fuel.FlightTracker(gate=45.0 * fuel_step ** 0.7)
         else:
-            tk = dict(cfg.get("tk", {}))
-            if fuel_step == 1:  # 60 Hz: the look-ahead seeding distances are per frame
-                tk.setdefault("seed_rmin", 1.5)
-                tk.setdefault("seed_rmax", 45.0)
-            tr = fuel.BallisticTracker(**tk)
+            # (fuel.BallisticTracker scales its per-frame seeding distances to the frame step itself, 60 Hz too)
+            tr = fuel.BallisticTracker(**cfg.get("tk", {}))
         for row in rows:
             tr.update(row[0], _blobs(row, cfg.get("source", "motion"), cfg.get("conf", 0.25), cfg.get("cluster", 0.0)))
         tracks = tr.flush()
@@ -305,7 +354,7 @@ def _match_union(per_view: dict[str, list[float]]) -> int:
 
 
 def burst_counts(key: str, tracks_all: dict, md, r: dict, info, bursts: list[dict]) -> list[dict]:
-    dets = json.loads((config.OUTPUT / key / "dets.json").read_text())
+    dets = _read(key, "dets.json")
     vl = {v.name: v for v in views.PRODUCTIONS[md.prod]}
     boxes = defaultdict(list)  # (team, view) -> [(t, x0, y0, x1, y1)] view-local
     for d in dets:
@@ -454,7 +503,7 @@ def cmd_recall(keys: list[str], variants: list[str], tag: str):
         if not todo:
             continue
         tic = time.time()
-        r = json.loads((config.OUTPUT / key / "result.json").read_text())
+        r = _read(key, "result.json")
         info = tba.match(key)
         bursts = sole_bursts(key, r, info, bym)
         if not bursts:
@@ -463,8 +512,7 @@ def cmd_recall(keys: list[str], variants: list[str], tag: str):
                 d.mkdir(parents=True, exist_ok=True)
                 (d / f"{key}.json").write_text("[]")
             continue
-        with open(BLOBS / f"{key}.pkl", "rb") as fh:
-            log = pickle.load(fh)
+        log = load_log(key)
         with open(config.OUTPUT / key / "scan.pkl", "rb") as fh:
             md = pickle.load(fh)
         for v in todo:
@@ -516,7 +564,8 @@ def main():
     ap.add_argument("--shard", default="0/1")
     a = ap.parse_args()
     bym = scouting.by_match(scouting.load())
-    keys = a.matches or sorted(p.stem for p in BLOBS.glob("2026cc_qm*.pkl") if p.stem in bym and p.stem != "2026cc_qm14")
+    keys = a.matches or sorted(k for k in {p.name.split(".")[0] for p in BLOBS.glob("2026cc_qm*.pkl*")}
+                               if k in bym and k != "2026cc_qm14")
     if a.cmd == "recall":
         si, sn = map(int, a.shard.split("/"))
         cmd_recall(keys[si::sn], a.variants, a.tag)

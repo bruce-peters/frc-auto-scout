@@ -274,3 +274,14 @@ all 42 Chezy teams.
 * `eval_ab.py`: the Chezy season-rate source A/B; results in `eval_ab.log` / `.json`.
 * `make_ds.py`: writes `ds_v6_season.pkl`.
 * `attr_model_season.json`: the model to deploy with the blend.
+
+### Removed from the default (2026-10-18, by design)
+
+Bruce: per-team fuel has to be an empirical measurement of how a team did in that match, so no OPR,
+season-to-date or other previous-match data may move balls between teams. The deployed credit model is now
+`lin/all+dist`, fitted without the prior (g_opr 0). `season.py` and `pipeline.prior_opr` stay in the code, but
+the default model doesn't call them.
+
+Cost on the current split tracks (nested CV, λ 3e-5, 105 scouted alliances): fuel MAE 38.8 → 42.5, top scorer
+76 → 65 %. The prior's gain came from nudging each team toward its usual level, which also flattens breakout and
+off matches.

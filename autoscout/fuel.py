@@ -339,7 +339,9 @@ class BallisticTracker:
             (t1, b1), (t2, b2) = nxt1, nxt2
             F1 = np.array([(b.u, b.v) for b in b1])
             F2 = cKDTree(np.array([(b.u, b.v) for b in b2]))
-            near = cKDTree(F1).query_ball_point(B[free], self.seed_rmax)
+            # seed distances are per 1/30 s frame step; at 60 Hz (fuel_step 1) a ball moves half as far
+            fs = max(0.5, round((t1 - t) * 60.0) / 2.0)
+            near = cKDTree(F1).query_ball_point(B[free], self.seed_rmax * fs)
             pairs = [(s, c) for s, cs in enumerate(near) for c in cs]
             if pairs:
                 s_idx = np.array([p[0] for p in pairs])
@@ -348,7 +350,7 @@ class BallisticTracker:
                 pred = F1[[p[1] for p in pairs]] + step * (t2 - t1) / max(t1 - t, 1e-6)
                 d2, _ = F2.query(pred)
                 tol = self.seed_tol + self.seed_tol_k * dstep
-                score = np.where((dstep >= self.seed_rmin) & (d2 <= tol), d2 / tol + 0.5 * (step[:, 1] > 0), np.inf)
+                score = np.where((dstep >= self.seed_rmin * fs) & (d2 <= tol), d2 / tol + 0.5 * (step[:, 1] > 0), np.inf)
                 order = np.lexsort((score, s_idx))  # best candidate first within each seed
                 first = np.r_[True, s_idx[order][1:] != s_idx[order][:-1]]
                 for k in order[first]:

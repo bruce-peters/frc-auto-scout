@@ -53,10 +53,12 @@ def main():
     OUT = EXP / a.out
     bym = scouting.by_match(scouting.load())
     keys = a.matches or sorted(k for k in bym if (config.OUTPUT / k / "scan.pkl").exists()
-                               and (TL.BLOBS / f"{k}.pkl").exists() and k != "2026cc_qm14")
-    if not a.score_only:
+                               and any(TL.BLOBS.glob(f"{k}.pkl*")) and (k != "2026cc_qm14" or "blobs60" in str(TL.BLOBS)))
+    use_arc = any(str(kw.get("ARC", "0")) == "1" for kw in arms.values())
+    if not a.score_only and use_arc:
         arc_hook.build()
         arc_hook.install_gate_wrapper()
+    if not a.score_only:
         print(len(keys), "scouted matches", flush=True)
         tic = time.time()
         for k in keys:
@@ -67,8 +69,7 @@ def main():
                 md = pickle.load(fh)
             pipeline.load_dino(md, config.OUTPUT / k)
             stored = md.tracks_all
-            with open(TL.BLOBS / f"{k}.pkl", "rb") as fh:
-                log = pickle.load(fh)
+            log = TL.load_log(k)
             cache = {}
             for name in todo:
                 kw = arms[name]
@@ -83,15 +84,20 @@ def main():
                 saved = {c: getattr(pipeline, c) for c in consts}
                 for c, v in consts.items():
                     setattr(pipeline, c, float(v) if isinstance(v, str) and v.replace(".", "", 1).isdigit() else v)
-                pipeline._ARC_HOOK = (arc_hook.ArcTerm(W=0.3, SIGMA2=1.0, prior="soft", gate_base=True)
-                                      if str(kw.get("ARC", "0")) == "1" else None)
-                res = pipeline.analyse_arc(md, pipeline.Options())
-                pipeline._ARC_HOOK = None
+                if use_arc:
+                    pipeline._ARC_HOOK = (arc_hook.ArcTerm(W=0.3, SIGMA2=1.0, prior="soft", gate_base=True)
+                                          if str(kw.get("ARC", "0")) == "1" else None)
+                    res = pipeline.analyse_arc(md, pipeline.Options())
+                    pipeline._ARC_HOOK = None
+                else:  # the plain analysis with today's defaults
+                    res = pipeline.analyse(md, pipeline.Options())
                 for c, v in saved.items():
                     setattr(pipeline, c, v)
                 od = OUT / name / k
                 od.mkdir(parents=True, exist_ok=True)
                 (od / "result.json").write_text(json.dumps(res, default=pipeline._json_default))
+                # robot boxes with their teams, for data/exp_attrmodel/tools/build_ds.py (credit-model refit)
+                (od / "dets.json").write_text(json.dumps(getattr(md, "det_rows", []), default=pipeline._json_default))
             md.tracks_all = stored
             del md, log, cache
             print(k, f"{time.time() - tic:.0f}s", flush=True)

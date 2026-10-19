@@ -51,6 +51,14 @@ AUTO_ZONE_GATE = False
 # error 0.153 -> 0.134 and fuel MAE 52.1 -> 44.5; other events' share corr vs OPR 0.635 -> 0.696). Results keep
 # the pure-video split as `fuel_video`. The environment variable AUTOSCOUT_ATTR_MODEL overrides the path;
 # set it to "none" for the hand-tuned rule above.
+# Credit rule. "model": the weights above (learned model or hand-tuned rule). "launches" (Bruce: no ball to a robot
+# that was not seen launching, no hidden-robot pseudo-shots): each scoreboard jump goes to the alliance's robots in
+# proportion to their kernel-weighted launches; a jump with no launch in its window goes by the launches in the
+# LAUNCH_WIDE_S s before it, then within +-LAUNCH_NEAR_S s, then in its period (auto / teleop), then the match. Only
+# an alliance with no launch all match is split evenly.
+CREDIT_RULE = "model"
+LAUNCH_WIDE_S = 12.0
+LAUNCH_NEAR_S = 30.0
 _env_model = os.environ.get("AUTOSCOUT_ATTR_MODEL")
 ATTR_MODEL: str | None = (None if (_env_model or "").lower() == "none" else _env_model) or (
     "models/attr_model.json" if (Path(__file__).resolve().parent.parent / "models" / "attr_model.json").exists()
@@ -203,6 +211,8 @@ def split_increments(increments: list[tuple[float, float]], teams: list[TeamSign
     (ATTR_MODEL) the weights come from _model_weights, and `opr` ({team: fuel OPR}, optional) feeds its
     match-level prior; `opr` is ignored by the hand-tuned rule.
     """
+    if CREDIT_RULE == "launches":
+        return _split_launches(increments, teams, to_match_time, log)
     model = load_model()
     out = {ts.team: {} for ts in teams}
     entries = []
@@ -244,6 +254,45 @@ def split_increments(increments: list[tuple[float, float]], teams: list[TeamSign
     if f:
         out = {tm: {p: v * f[tm] for p, v in d.items()} for tm, d in out.items()}
         entries = [(mt, tm, b * f[tm]) for mt, tm, b in entries]
+    if log is not None:
+        log.extend((round(mt, 2), tm, round(b, 3)) for mt, tm, b in entries)
+    return out
+
+
+def _split_launches(increments: list[tuple[float, float]], teams: list[TeamSignals], to_match_time,
+                    log: list | None = None) -> dict[int, dict[str, float]]:
+    """CREDIT_RULE "launches": every ball to robots seen launching, nearest launches in time first."""
+    out = {ts.team: {} for ts in teams}
+    entries = []
+    sh = [ts.shots if len(ts.shots) else np.zeros(0) for ts in teams]
+    sw = [ts.shot_w if len(ts.shots) else np.zeros(0) for ts in teams]
+    auto = [np.array([(m is not None and m < AUTO_LEN + GRACE) for m in map(to_match_time, s)], bool) for s in sh]
+
+    def flat(lo: float, hi: float) -> np.ndarray:
+        return np.array([float(w[(s >= lo) & (s < hi)].sum()) for s, w in zip(sh, sw)])
+
+    for t, n in increments:
+        if n <= 0:
+            continue
+        mt = to_match_time(t - 2.0)
+        per = period_of(mt) if mt is not None else "unknown"
+        w = np.array([float((kernel(t - s) * w_).sum()) for s, w_ in zip(sh, sw)])
+        if w.sum() <= 1e-9:
+            w = flat(t - LAUNCH_WIDE_S, t - LAG_LO)
+        if w.sum() <= 1e-9:
+            w = flat(t - LAUNCH_NEAR_S, t + LAUNCH_NEAR_S)
+        if w.sum() <= 1e-9:
+            in_auto = per == "auto"
+            w = np.array([float(w_[a == in_auto].sum()) for w_, a in zip(sw, auto)])
+        if w.sum() <= 1e-9:
+            w = np.array([float(w_.sum()) for w_ in sw])
+        if w.sum() <= 1e-9:
+            w = np.ones(len(teams))
+        w = w / w.sum()
+        for i, ts in enumerate(teams):
+            out[ts.team][per] = out[ts.team].get(per, 0.0) + n * w[i]
+            if mt is not None:
+                entries.append((mt, ts.team, float(n * w[i])))
     if log is not None:
         log.extend((round(mt, 2), tm, round(b, 3)) for mt, tm, b in entries)
     return out

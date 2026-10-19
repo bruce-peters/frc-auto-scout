@@ -142,7 +142,7 @@ def section(s: dict, label: str) -> str:
              f"{s['team_matches']} team-matches in {s['matches']} Chezy Champs quals scouted by FRC 5026 "
              "(every robot scouted, mostly twice). Reference = the alliance's TBA fuel total split by scouted "
              "shots, so it assumes equal accuracy within an alliance.", "",
-             ("| | auto-scout (best estimate) | video only | even 1/3 split | fuel-OPR split |" if vo else
+             ("| | auto-scout | older hand-tuned rule | even 1/3 split | fuel-OPR split |" if vo else
               "| | auto-scout | even 1/3 split | fuel-OPR split |"),
              "| --- | ---: | ---: | ---: |" + (" ---: |" if vo else ""),
              f"| team-match fuel error, mean | **{v['mae']:.1f}** |" + (f" {w['mae']:.1f} |" if vo else "") + f" {u['mae']:.1f} | {o['mae']:.1f} |",
@@ -158,7 +158,7 @@ def section(s: dict, label: str) -> str:
     lines += ["", f"* noise floor: the reference built from one scout vs the other differs by {s['noise_mae']:.1f} fuel "
               "per team-match on average"]
     if vo:
-        lines.append("* the best estimate uses the learned credit model, which was fitted to these same scouted matches, "
+        lines.append("* auto-scout uses the learned credit model, which was fitted to these same scouted matches, "
                      "so this column is in-sample; its cross-validated figures are in \"Learned per-team credit split\"")
     lines.append("")
     return "\n".join(lines)

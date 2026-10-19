@@ -119,9 +119,7 @@ def team_metrics(team_rows: list[dict]) -> dict:
 
 
 def team_rows_of(r: dict, info, opr_ev: dict) -> list[dict]:
-    """Per-team rows (fuel OPR, video-only fuel, best-estimate fuel) of one result.json. "fuel" is the
-    video-only split so the OPR comparison stays independent: the learned credit model ("fuel_best") applies
-    a fuel-OPR prior itself."""
+    """Per-team rows (per-match fuel, the older hand-tuned rule's fuel, fuel OPR) of one result.json."""
     out = []
     for al in ("red", "blue"):
         tba_total = info.hub(al).get("totalCount")
@@ -130,8 +128,9 @@ def team_rows_of(r: dict, info, opr_ev: dict) -> list[dict]:
         rt = [r["teams"][str(t)] for t in teams]
         for t, oo, x in zip(teams, o, rt):
             share_o = oo / np.nansum(o) if np.nansum(o) > 0 else np.nan
-            out.append({"match": r["match"], "team": t, "alliance": al, "fuel": x.get("fuel_video", x["fuel"]),
-                        "fuel_best": x["fuel"], "opr": oo, "opr_share_pred": share_o * (tba_total or 0)})
+            out.append({"match": r["match"], "team": t, "alliance": al, "fuel": x["fuel"],
+                        "fuel_rule": x.get("fuel_video", x["fuel"]), "opr": oo,
+                        "opr_share_pred": share_o * (tba_total or 0)})
     return out
 
 
@@ -185,12 +184,14 @@ def write_results_md(rows, team_rows, errs_o, shares_a, shares_o, abs_err, base_
              "**Summary.** Alliance FUEL totals read from the broadcast's live counter are within a few "
              "percent of TBA's official hub counts in every match (the acceptance bar was 15 %). Per-team "
              "numbers split that exact total by which robots were seen launching fuel while in their "
-             "alliance zone (video only), then a credit model fitted to 5026's scouting pulls each team's "
-             "share partly toward its fuel OPR (best estimate). Nothing uses an event's later matches: the OPR "
-             "and the DINO robot recognizer only learn from matches already played, as they would live, plus each "
-             "team's public results at its earlier events of the season. Against the scouting the best estimate is "
-             "off by ~42 fuel per team-match held out, video only by ~48 "
-             "(missed launches in dense volleys and look-alike neighbours are the main error sources). "
+             "alliance zone, with weights from a small credit model fitted once to 5026's scouting. Each "
+             "match's split uses only that match's video: no OPR or other team history moves balls between "
+             "teams. Nothing uses an event's later matches either: the DINO robot recognizer only learns from "
+             "matches already played, as it would live. A robot or launch no camera can identify goes, by "
+             "elimination, to the one robot of its alliance not seen anywhere else. Against the scouting the per-team "
+             "numbers are off by ~41 fuel per team-match held out (the older hand-tuned rule on the same evidence: "
+             "~47); arcs credited to a teammate standing next to the shooter, and shooters no camera sees, are the "
+             "main error sources. "
              "A pure vision hub counter "
              "(no overlay) was built and evaluated but is ~30 % off, so it is only a fallback.", ""]
     if errs_o:
@@ -221,8 +222,8 @@ def write_results_md(rows, team_rows, errs_o, shares_a, shares_o, abs_err, base_
         lines += ["## Team-level attribution vs fuel OPR (independent per-team reference)", "",
                   "Fuel OPR (least squares over every qualification match at the event, from TBA) is the only "
                   "public per-team reference. It is a season-average, so it cannot be matched exactly in any "
-                  "single match (defense, breakdowns, roles change match to match). Scored on the video-only "
-                  "split, since the best estimate already leans on fuel OPR.", "",
+                  "single match (defense, breakdowns, roles change match to match). The per-team numbers do "
+                  "not use OPR, so this is an independent check.", "",
                   f"* team-matches: {len(shares_a)}",
                   f"* correlation of within-alliance share (video vs OPR): {np.corrcoef(shares_a, shares_o)[0, 1]:.2f}",
                   f"* top scorer of the alliance (video) = top fuel-OPR team: {top}/{len(shares_a) // 3} alliances "
@@ -235,11 +236,10 @@ def write_results_md(rows, team_rows, errs_o, shares_a, shares_o, abs_err, base_
     lines += fuel_det_ab_section()
     mine = [x for x in team_rows if x["team"] == 5026]
     if mine:
-        lines += ["## Team 5026", "", "Best estimate = learned credit model (pulled toward fuel OPR); video only "
-                  "shows breakout or off matches more clearly.", "",
-                  "| match | fuel (best estimate) | fuel (video only) | fuel OPR at event |", "| --- | ---: | ---: | ---: |"]
+        lines += ["## Team 5026", "", "Fuel from each match's video alone; the event's fuel OPR is shown for reference.", "",
+                  "| match | fuel | fuel OPR at event |", "| --- | ---: | ---: |"]
         for x in mine:
-            lines.append(f"| {x['match']} | {x['fuel_best']:.0f} | {x['fuel']:.0f} | {x['opr']:.0f} |")
+            lines.append(f"| {x['match']} | {x['fuel']:.0f} | {x['opr']:.0f} |")
         lines.append("")
     (config.ROOT / "RESULTS.md").write_text(chr(10).join(lines), encoding="utf-8")
 
