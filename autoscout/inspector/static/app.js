@@ -46,7 +46,8 @@ const S = {
   color: {}, alliance: {},
   detTimes: [], detGroups: new Map(),
   counts: { red: [], blue: [] },
-  layers: { boxes: true, unassigned: true, shots: true, credit: true, counters: true, segids: false, views: false, solo: false },
+  layers: { boxes: true, unassigned: true, shots: true, alltracks: false, credit: true, counters: true, segids: false, views: false, solo: false },
+  tracks: null, tracksKey: null, entries: null, entriesKey: null,
   sel: { det: null, seg: null, team: null },
   ocr: null, ocrLoading: false,
   contradicted: new Set(),
@@ -181,6 +182,8 @@ async function openMatch(key, seekVT) {
   S.teamStats = teamStats();
   S.credit = creditCurves();
   S.jumps = creditJumps(); S.feedAt = null; S.selJump = null;
+  S.tracks = null; S.tracksKey = null; if (S.layers.alltracks) loadTracks();
+  S.entries = null; S.entriesKey = null; if (S.layers.entries) loadEntries();
   renderHeader(); renderSelection();
   const v = $("#video");
   v.src = `/video/${key}`;
@@ -381,6 +384,57 @@ function renderTabCounts() {
   document.querySelectorAll("[data-count]").forEach((s) => (s.textContent = n[s.dataset.count]));
 }
 
+// every flight track of the match (GET /api/match/<key>/tracks, read from the scan; a few MB, loaded on demand)
+async function loadTracks() {
+  const key = S.key; if (!key || S.tracksKey === key) return;
+  S.tracksKey = key;
+  const lab = document.querySelector('[data-layer="alltracks"] + span'); const txt = lab ? lab.textContent : "";
+  if (lab) lab.textContent = "All flight tracks (loading)";
+  try {
+    const res = await fetch(`/api/match/${key}/tracks`);
+    if (!res.ok) {  // a server started before this layer existed has no tracks endpoint
+      S.tracksKey = null;
+      if (lab) setTimeout(() => (lab.textContent = "All flight tracks (restart the viewer server)"), 0);
+      return;
+    }
+    const raw = await res.json();
+    if (S.key !== key) return;
+    const out = {};
+    for (const [view, tracks] of Object.entries(raw || {})) {
+      const list = tracks.map((a) => Float32Array.from(a)).sort((a, b) => a[0] - b[0]);
+      out[view] = { tracks: list, t0s: list.map((a) => a[0]), length: list.length };
+    }
+    S.tracks = out; drawAll();
+  } catch (e) { S.tracksKey = null; }
+  finally { if (lab) lab.textContent = txt; }
+}
+
+// counted balls re-timed to their hub entries (GET /api/match/<key>/entries; the server reads the scan, ~2 s)
+async function loadEntries() {
+  const key = S.key; if (!key || S.entriesKey === key) return;
+  S.entriesKey = key;
+  const lab = document.querySelector('[data-layer="entries"] + span'); const txt = lab ? lab.textContent : "";
+  if (lab) lab.textContent = "Balls in hub (loading)";
+  try {
+    const res = await fetch(`/api/match/${key}/entries`);
+    if (!res.ok) { S.entriesKey = null; if (lab) setTimeout(() => (lab.textContent = "Balls in hub (restart the viewer server)"), 0); return; }
+    const raw = await res.json();
+    if (S.key !== key) return;
+    S.entries = {};
+    for (const al of ["red", "blue"]) {
+      const rows = (raw[al] || []).slice().sort((a, b) => a[1] - b[1]);
+      let c = 0; S.entries[al] = { t: rows.map((r) => r[1]), cum: rows.map((r) => (c += r[2])) };
+    }
+    drawAll();
+  } catch (e) { S.entriesKey = null; }
+  finally { if (lab) lab.textContent = txt; }
+}
+function inHubAt(al, vt) {  // balls that had dropped into the hub by video time vt
+  const e = S.entries?.[al]; if (!e || !e.t.length) return null;
+  let lo = 0, hi = e.t.length; while (lo < hi) { const m = (lo + hi) >> 1; if (e.t[m] <= vt) lo = m + 1; else hi = m; }
+  return lo ? Math.round(e.cum[lo - 1]) : 0;
+}
+
 // ---------------------------------------------------------------- drawing
 function resize() {
   const dpr = window.devicePixelRatio || 1;
@@ -430,6 +484,8 @@ function drawOverlay() {
       const [x0, y0, x1, y1] = roi; ctx.lineWidth = 4; ctx.strokeStyle = C.accent;
       ctx.strokeRect(x0 * sx - 4, y0 * sy - 4, (x1 - x0) * sx + 8, (y1 - y0) * sy + 8);
       label(ctx, `read ${countAt(al, vt)}`, x0 * sx - 4, y1 * sy + 4 + px(19), C.accent, px(13));
+      const ih = S.layers.entries ? inHubAt(al, vt) : null;
+      if (ih != null) label(ctx, `in hub ${ih}`, x0 * sx - 4, y1 * sy + 4 + px(42), "#ffffff", px(13));
     }
   }
   if (S.layers.boxes) {
@@ -446,6 +502,28 @@ function drawOverlay() {
       let txt = team != null ? String(team) : "?";
       if (S.layers.segids && sid != null) txt += ` s${sid}`;
       label(ctx, txt, x0 * sx - (selected ? 3.5 : 2), y0 * sy - (selected ? 3.5 : 2), col, px(13));
+    }
+  }
+  if (S.layers.alltracks && S.tracks) {
+    // every ball path the fuel scan followed, grey, drawn up to the playhead while it lasts (+0.5 s);
+    // the launch-arcs layer draws the ones counted as launches on top, in team colour
+    const offs = Object.fromEntries(D.views.map((w) => [w.name, [w.box[0] * sx, w.box[1] * sy]]));
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    for (const [view, list] of Object.entries(S.tracks)) {
+      const [ox, oy] = offs[view] || [0, 0];
+      for (let i = bsearch(list.t0s, vt - 8); i < list.length && list.t0s[i] <= vt; i++) {
+        const p = list.tracks[i]; const n = p.length / 3;
+        if (p[3 * (n - 1)] + 0.5 < vt) continue;
+        ctx.strokeStyle = "rgba(235,235,235,.55)"; ctx.lineWidth = 2; ctx.beginPath();
+        let last = -1;
+        for (let k = 0; k < n && p[3 * k] <= vt; k++) {
+          const x = p[3 * k + 1] + ox, y = p[3 * k + 2] + oy;
+          if (k) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+          last = k;
+        }
+        ctx.stroke();
+        if (last >= 0) { ctx.fillStyle = "rgba(255,255,255,.85)"; ctx.beginPath(); ctx.arc(p[3 * last + 1] + ox, p[3 * last + 2] + oy, 3.5, 0, 7); ctx.fill(); }
+      }
     }
   }
   if (S.layers.shots) {
@@ -764,7 +842,7 @@ function renderSub() {
 }
 
 // ---------------------------------------------------------------- shooter labelling
-const LAB_HIDE = ["boxes", "unassigned", "shots", "credit", "segids", "solo"];
+const LAB_HIDE = ["boxes", "unassigned", "shots", "alltracks", "entries", "credit", "segids", "solo"];
 
 async function toggleLabel(on) {
   const L = S.label; L.on = on ?? !L.on;
@@ -931,7 +1009,12 @@ function bind() {
   document.querySelectorAll("[data-step]").forEach((b) => (b.onclick = () => seekVT(v.currentTime + parseFloat(b.dataset.step))));
   document.querySelectorAll("[data-jump]").forEach((b) => (b.onclick = () => seekVT(toVT(parseFloat(b.dataset.jump)))));
   $("#speed").onchange = (e) => (v.playbackRate = parseFloat(e.target.value));
-  document.querySelectorAll("[data-layer]").forEach((cb) => (cb.onchange = () => { S.layers[cb.dataset.layer] = cb.checked; drawAll(); }));
+  document.querySelectorAll("[data-layer]").forEach((cb) => (cb.onchange = () => {
+    S.layers[cb.dataset.layer] = cb.checked;
+    if (cb.dataset.layer === "alltracks" && cb.checked) loadTracks();
+    if (cb.dataset.layer === "entries" && cb.checked) loadEntries();
+    drawAll();
+  }));
   document.querySelectorAll(".sub").forEach((b) => (b.onclick = () => { S.sub = b.dataset.sub; renderSub(); }));
   v.addEventListener("play", tick); v.addEventListener("pause", drawAll); v.addEventListener("seeked", drawAll);
   v.addEventListener("timeupdate", () => { if (v.paused) drawAll(); });

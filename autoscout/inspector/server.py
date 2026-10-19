@@ -198,6 +198,52 @@ def match_ocr(key: str) -> dict:
     return out
 
 
+def match_tracks(key: str) -> dict:
+    """Every flight track the fuel scan kept, not only the launches: {view: [[t, u, v, t, u, v, ...], ...]} in
+    view pixels (like shots' pts), for the inspector's "All flight tracks" layer."""
+    pk = config.OUTPUT / key / "scan.pkl"
+    if not pk.exists():
+        return {}
+    with _lock, open(pk, "rb") as fh:
+        md = pickle.load(fh)
+    out = {}
+    for view, tracks in (getattr(md, "tracks_all", None) or {}).items():
+        out[view] = [[x for p in tr.pts for x in (round(float(p[0]), 2), int(round(p[1])), int(round(p[2])))]
+                     for tr in tracks]
+    return out
+
+
+def match_entries(key: str) -> dict:
+    """Counted balls re-timed to when they dropped into the hub (autoscout/hubentry.py: the hub counts at most
+    ~15 balls/s, so the scoreboard runs seconds behind in a dump): {alliance: [[count_t, entry_t, balls, conf]]}."""
+    from .. import hubentry as H
+
+    d = config.OUTPUT / key
+    if not (d / "scan.pkl").exists():
+        return {}
+    tl = json.loads((d / "result.json").read_text())["timeline"]
+    a0 = tl.get("auto_start") or 6.13
+    t0, t1 = a0 - 1.0, (tl.get("teleop_start") or a0 + 25.1) + config.TELEOP_LEN + 6.0
+    with _lock, open(d / "scan.pkl", "rb") as fh:
+        md = pickle.load(fh)
+    tables = {v: H.track_ends(trs, md.cams.get(v)) for v, trs in md.tracks_all.items()}
+    hf = {k: np.asarray(v, dtype=np.float64).reshape(-1, 3) for k, v in (md.hub_feats or {}).items()}
+    del md
+    out = {}
+    for al in ("red", "blue"):
+        inc, prev = [], 0
+        for t, n in tl.get("counts", {}).get(al) or []:
+            if n > prev and t0 <= t <= t1:
+                inc.append((t, float(n - prev)))
+            prev = max(prev, n)
+        if not inc:
+            continue
+        rt, rate = H.entry_series(tables, hf, al, t0, t1)
+        out[al] = [[round(e.count_t, 2), round(e.entry_t, 2), round(e.n, 2), round(e.conf, 2)]
+                   for e in H.retime_queue(inc, rt, rate)]
+    return out
+
+
 def match_frame(key: str, t: float, w: int) -> Path | None:
     """The video frame at video time t, scaled to width w, as a cached JPEG (filmstrip, event board)."""
     t, w = round(max(0.0, t), 1), min(max(int(w), 120), 960)
@@ -232,9 +278,15 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _json(self, obj, code=200):
-        body = json.dumps(obj, default=_default).encode()
+        body = json.dumps(obj, default=_default, separators=(",", ":")).encode()
+        gz = len(body) > 1 << 16 and "gzip" in (self.headers.get("Accept-Encoding") or "")
+        if gz:  # big payloads (every flight track of a match is several MB)
+            import gzip
+            body = gzip.compress(body, 5)
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -306,13 +358,17 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as e:
                         rows.append({"key": d.name, "error": repr(e)})
                 return self._json(rows)
-            m = re.match(r"^/api/match/([^/]+)(/ocr|/bursts)?$", path)
+            m = re.match(r"^/api/match/([^/]+)(/ocr|/bursts|/tracks|/entries)?$", path)
             if m:
                 key = m.group(1)
                 if not KEY_RE.match(key) or not (config.OUTPUT / key / "result.json").exists():
                     return self._json({"error": "unknown match"}, 404)
                 if m.group(2) == "/bursts":
                     return self._json(match_bursts(key))
+                if m.group(2) == "/tracks":
+                    return self._json(match_tracks(key))
+                if m.group(2) == "/entries":
+                    return self._json(match_entries(key))
                 return self._json(match_ocr(key) if m.group(2) else match_detail(key))
             m = re.match(r"^/api/labels/([^/]+)$", path)
             if m and KEY_RE.match(m.group(1)):

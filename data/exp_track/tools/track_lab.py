@@ -52,9 +52,44 @@ W, H = 1920, 1080
 
 # ---------------------------------------------------------------- tracker variants
 
-def _blobs(row, source="motion", conf=0.25):
+def cluster_blobs(blobs: list, r: float) -> list:
+    """Merge motion blobs whose centres are within r px (fragments of one near ball in the difference mask):
+    area-weighted centre, union box, summed area."""
+    if r <= 0 or len(blobs) < 2:
+        return blobs
+    P_ = np.array([(b.u, b.v) for b in blobs])
+    parent = list(range(len(blobs)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    d = np.sqrt(((P_[:, None] - P_[None]) ** 2).sum(-1))
+    ii, jj = np.nonzero(np.triu(d <= r, 1))
+    for i, j in zip(ii, jj):
+        parent[find(i)] = find(j)
+    groups = defaultdict(list)
+    for i in range(len(blobs)):
+        groups[find(i)].append(blobs[i])
+    out = []
+    for g in groups.values():
+        if len(g) == 1:
+            out.append(g[0])
+            continue
+        a = np.array([b.area for b in g])
+        u = float((a * [b.u for b in g]).sum() / a.sum()); v = float((a * [b.v for b in g]).sum() / a.sum())
+        x0 = min(b.x0 for b in g); y0 = min(b.y0 for b in g)
+        x1 = max(b.x0 + b.w for b in g); y1 = max(b.y0 + b.h for b in g)
+        out.append(fuel.Blob(u, v, float(a.sum()), x1 - x0, y1 - y0, x0, y0))
+    return out
+
+
+def _blobs(row, source="motion", conf=0.25, cluster=0.0):
     tc, mb, dd = row
     blobs = [] if source == "det" else [fuel.Blob(*map(float, r)) for r in mb]
+    if cluster:
+        blobs = cluster_blobs(blobs, cluster)
     if source in ("det", "union"):
         blobs = fuel.merge_detections(blobs, dd, conf)
     return blobs
@@ -131,6 +166,10 @@ VARIANTS = {
     "ballistic+stitch": dict(tracker="ballistic", tk=dict(min_len=3), post=["stitch"]),
     "ballistic+split+stitch": dict(tracker="ballistic", tk=dict(min_len=3), post=["split", "stitch"]),
     "greedy+split+stitch": dict(tracker="greedy", post=["split", "stitch"]),
+    # fragments of one near ball merged before association (prior-art note 2)
+    "ballistic+cl10+split": dict(tracker="ballistic", cluster=10.0, post=["split"]),
+    "ballistic+cl16+split": dict(tracker="ballistic", cluster=16.0, post=["split"]),
+    "greedy+cl10+split": dict(tracker="greedy", cluster=10.0, post=["split"]),
 }
 
 
@@ -148,7 +187,7 @@ def run(name: str, blob_log: dict, md=None, fuel_step: int = 2) -> dict:
                 tk.setdefault("seed_rmax", 45.0)
             tr = fuel.BallisticTracker(**tk)
         for row in rows:
-            tr.update(row[0], _blobs(row, cfg.get("source", "motion"), cfg.get("conf", 0.25)))
+            tr.update(row[0], _blobs(row, cfg.get("source", "motion"), cfg.get("conf", 0.25), cfg.get("cluster", 0.0)))
         tracks = tr.flush()
         for step in cfg.get("post", []):
             if step == "split":
@@ -398,6 +437,8 @@ def summarize(recs: list[dict]) -> dict:
         idle_mo = sum(x["union_mo"] for x in r.get("idle", []))
         for c in (cls, "all"):
             acc[("cov", c)] += (r["N"], r["union_mo"], r["union"], idle_mo)
+        size = "3-9" if r["N"] < 10 else ("10-19" if r["N"] < 20 else "20+")
+        acc[("size", size)] += (r["N"], r["union_mo"], r["union"], idle_mo)
     out = {}
     for (a, b), x in acc.items():
         out[f"{a}|{b}"] = {"N": float(x[0]), "recall": float(x[1] / x[0]) if x[0] else float("nan"),
@@ -440,8 +481,8 @@ def cmd_report(variants: list[str], tag: str, keys: list[str] | None = None):
     print(f"ball-level launch recall on sole-shooter bursts: unique balls / scoreboard balls (results {tag})")
     print("  view X: shooter visible in that view; 'false' = launches credited to the idle teammates, per scored ball")
     print("  cov: balls seen in the main or the own end view (one-to-one across the two), by which camera sees the shooter")
-    cols = [("view", "own end"), ("view", "main"), ("view", "other end"), ("cov", "own end"), ("cov", "main only"),
-            ("cov", "none"), ("cov", "all")]
+    cols = [("view", "own end"), ("view", "main"), ("cov", "own end"), ("cov", "main only"), ("cov", "none"),
+            ("cov", "all"), ("size", "3-9"), ("size", "10-19"), ("size", "20+")]
     print(f"{'variant':24s} " + " ".join(f"{a + ' ' + b:>16s}" for a, b in cols))
     rep = {}
     for v in variants:

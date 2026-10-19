@@ -15,8 +15,10 @@ and blends it with the event's own matches as they are played.
   event's level) with a strength of SEASON_WEIGHT alliance-matches per earlier match.
 * season_prior(team, event_key, before_match): one team's entry of prior_oprs.
 
-TBA responses are cached on disk by tba.get (data/cache/tba). Statbotics (season EPA) is the fallback for a
-team with no usable TBA history; its responses are cached in data/cache/statbotics.
+SOURCE picks the season rate: "opr" (above, the default), "epa" (Statbotics' fuel EPA update re-run on TBA hub
+totals, as of the event start: season_epa) or "statbotics" (Statbotics' own total_fuel EPA after the team's
+last earlier event, from its API). TBA responses are cached on disk by tba.get (data/cache/tba), Statbotics
+responses in data/cache/statbotics; Statbotics is also the fallback for a team with no usable TBA history.
 """
 from __future__ import annotations
 
@@ -37,6 +39,7 @@ from .config import CACHE
 HALF_LIFE_DAYS = 60.0  # recency: an event this many days older counts half as much
 SEASON_WEIGHT = 0.5  # ridge strength per earlier-event qual, in alliance-match observations of this event
 NORM = False  # divide each event's OPR by its fitted scoring level (event_levels) before averaging
+SOURCE = "opr"  # season rate: "opr" | "epa" | "statbotics" (module docstring)
 MIN_QUALS = 8  # earlier events with fewer scored quals (with hub totals) are skipped
 EVENT_RIDGE = 2.0  # shrinks weakly connected events' level toward the average (team-event equivalents)
 NO_PRIOR_RIDGE = 0.5  # opr.fuel_opr's ridge, for a team with no season rate (toward the event mean)
@@ -44,6 +47,7 @@ SKIP_TYPES = {100}  # preseason
 
 STATBOTICS = "https://api.statbotics.io/v3"
 _SB_DIR = CACHE / "statbotics"
+_SB_FAILED: set[str] = set()
 
 
 # ----------------------------------------------------------------------------- TBA history
@@ -139,10 +143,16 @@ class SeasonRate:
     source: str = "tba"
 
 
-def season_rate(team: int, event_key: str, half_life: float = None, norm: bool = None) -> SeasonRate | None:
+def season_rate(team: int, event_key: str, half_life: float = None, norm: bool = None,
+                source: str = None) -> SeasonRate | None:
     """The team's fuel scoring rate from its earlier events of the season (None without usable history)."""
     half_life = HALF_LIFE_DAYS if half_life is None else half_life
     norm = NORM if norm is None else norm
+    source = SOURCE if source is None else source
+    if source == "epa":
+        return epa_rate(team, event_key, half_life)
+    if source == "statbotics":
+        return statbotics_rate(team, event_key, half_life)
     start = _day(event_simple(event_key)["start_date"])
     levels = event_levels(event_key) if norm else {}
     num = den = 0.0
@@ -159,7 +169,92 @@ def season_rate(team: int, event_key: str, half_life: float = None, norm: bool =
         evs.append((e["key"], round(o[team], 2), round(lv, 3), n[team], round(w, 3)))
     if den > 0:
         return SeasonRate(num / den, den, evs)
-    return statbotics_rate(team, event_key)
+    return statbotics_rate(team, event_key, half_life)
+
+
+def _quals_eff(team: int, event_key: str, half_life: float) -> float:
+    """The team's quals at its earlier events, recency-weighted as in season_rate (the blend's prior strength)."""
+    start = _day(event_simple(event_key)["start_date"])
+    tot = 0.0
+    for e in prior_events(team, event_key):
+        n = event_oprs(e["key"])[1].get(team, 0)
+        tot += n * (0.5 ** ((start - _day(e["end_date"])).days / half_life) if np.isfinite(half_life) else 1.0)
+    return tot
+
+
+# ----------------------------------------------------------------------------- Statbotics-style EPA
+EPA_ELIM_WEIGHT = 1 / 3  # Statbotics models/epa/constants.py ELIM_WEIGHT
+EPA_INIT_MATCHES = 200  # every team starts at a third of the mean alliance fuel of the season's first matches
+
+
+def _epa_percent(n_quals: int) -> float:
+    """Statbotics' EPA learning rate (models/epa/main.py percent_func, years >= 2016): 1/3 of the alliance error
+    share for a team's first 6 quals, falling to 0.2 by its 12th."""
+    return 2 / 3 * min(0.5, max(0.3, 0.5 - 0.2 / 6 * (n_quals - 6)))
+
+
+@lru_cache(maxsize=None)
+def season_epa(year: int) -> dict:
+    """Statbotics' fuel EPA (models/epa/main.py) re-run on TBA hub totals over every scored match of the season,
+    in match-time order. Each alliance's error (its fuel minus the sum of its teams' EPAs) is split evenly over
+    its 3 teams and each EPA moves by _epa_percent of its share; playoffs count EPA_ELIM_WEIGHT and do not
+    advance the qual count; the margin (opponent) term is 0, as Statbotics has it for 2026. Differences from
+    Statbotics: no carry-over from the previous season (Statbotics starts each team from its earlier years'
+    EPA), and the start is the mean of the season's first EPA_INIT_MATCHES matches, not of the whole season.
+    {team: [(match time, EPA after the match, event key, event end date, qual?)]}; B/C teams keep their key."""
+    events = {e["key"]: e for e in tba.get(f"/events/{year}/simple")
+              if e.get("event_type") not in SKIP_TYPES and _day(e["start_date"]) <= date.today()}
+    rows = []
+    for k, e in events.items():
+        try:
+            ms = tba.get(f"/event/{k}/matches")
+        except requests.HTTPError:
+            continue
+        noon = time.mktime(_day(e["end_date"]).timetuple()) + 12 * 3600
+        for m in ms:
+            bd = m.get("score_breakdown") or {}
+            ys = [((bd.get(a) or {}).get("hubScore") or {}).get("totalCount") for a in ("red", "blue")]
+            if None in ys:
+                continue
+            t = m.get("actual_time") or m.get("time") or m.get("predicted_time") or noon
+            order = (oprmod.LEVEL_ORDER.get(m["comp_level"], 9), m["set_number"], m["match_number"])
+            rows.append((t, k, order, m, ys))
+    rows.sort(key=lambda x: x[:3])
+    if not rows:
+        return {}
+    init = float(np.mean([y for r in rows[:EPA_INIT_MATCHES] for y in r[4]])) / 3
+
+    def tid(key):
+        return int(key[3:]) if key[3:].isdigit() else key
+
+    epa: dict = {}
+    nq: dict = {}
+    hist: dict = {}
+    for t, k, _, m, ys in rows:
+        qual = m["comp_level"] == "qm"
+        w = 1.0 if qual else EPA_ELIM_WEIGHT
+        als = [[tid(x) for x in m["alliances"][a]["team_keys"]] for a in ("red", "blue")]
+        errs = [y - sum(epa.get(x, init) for x in al) for al, y in zip(als, ys)]  # both before either update
+        end = _day(events[k]["end_date"])
+        for al, err in zip(als, errs):
+            for x in al:
+                epa[x] = epa.get(x, init) + w * _epa_percent(nq.get(x, 0)) * err / len(al)
+                if qual:
+                    nq[x] = nq.get(x, 0) + 1
+                hist.setdefault(x, []).append((t, epa[x], k, end, qual))
+    return hist
+
+
+def epa_rate(team: int, event_key: str, half_life: float = None) -> SeasonRate | None:
+    """The team's fuel EPA (season_epa) after its last match at an event that ended before event_key started."""
+    half_life = HALF_LIFE_DAYS if half_life is None else half_life
+    ev = event_simple(event_key)
+    start = _day(ev["start_date"])
+    prior = [h for h in season_epa(int(ev["year"])).get(team, []) if h[3] < start and h[2] != event_key]
+    if not prior:
+        return statbotics_rate(team, event_key, half_life)
+    evs = sorted({(h[2], h[3]) for h in prior}, key=lambda x: x[1])
+    return SeasonRate(prior[-1][1], _quals_eff(team, event_key, half_life), [k for k, _ in evs], "epa")
 
 
 # ----------------------------------------------------------------------------- Statbotics fallback
@@ -169,46 +264,47 @@ def _sb_get(path: str, max_age_s: float = 7 * 24 * 3600) -> object | None:
     fn = _SB_DIR / (path.strip("/").replace("/", "__").replace("?", "_").replace("&", "_").replace("=", "-") + ".json")
     if fn.exists() and time.time() - fn.stat().st_mtime < max_age_s:
         return json.loads(fn.read_text())
+    if path in _SB_FAILED:
+        return None
     try:
         r = requests.get(STATBOTICS + path, timeout=20)
         r.raise_for_status()
         data = r.json()
     except (requests.RequestException, ValueError):
+        _SB_FAILED.add(path)  # not retried in this process
         return None
     fn.write_text(json.dumps(data))
     return data
 
 
 def _sb_fuel(epa: dict) -> float | None:
-    """A fuel-count component of a Statbotics EPA breakdown, if it has one (2026 schema unverified)."""
-    bd = (epa or {}).get("breakdown") or {}
-    for k in ("total_fuel", "fuel", "teleop_fuel", "fuel_points"):
-        if isinstance(bd.get(k), (int, float)):
-            return float(bd[k])
+    """total_fuel of a Statbotics 2026 EPA breakdown (backend/src/breakdown.py: auto + transition + first and
+    second shift + endgame fuel), as a number or a {"mean": ...} entry."""
+    x = ((epa or {}).get("breakdown") or {}).get("total_fuel")
+    if isinstance(x, dict):
+        x = x.get("mean")
+    return float(x) if isinstance(x, (int, float)) else None
+
+
+def statbotics_rate(team: int, event_key: str, half_life: float = None) -> SeasonRate | None:
+    """Statbotics' total_fuel EPA at the end of the team's last earlier event (team_event endpoint), i.e. as of
+    the event start; None if the API has nothing (it is often down)."""
+    half_life = HALF_LIFE_DAYS if half_life is None else half_life
+    if not prior_events(team, event_key):
+        return None
+    year = int(event_simple(event_key)["year"])
+    by_event = {d.get("event"): d for d in _sb_get(f"/team_events?team={team}&year={year}") or [] if isinstance(d, dict)}
+    for e in reversed(prior_events(team, event_key)):
+        d = by_event.get(e["key"]) or _sb_get(f"/team_event/{team}/{e['key']}")
+        x = _sb_fuel(d.get("epa")) if isinstance(d, dict) else None
+        if x is not None:
+            return SeasonRate(x, _quals_eff(team, event_key, half_life), [e["key"]], "statbotics")
     return None
-
-
-def statbotics_rate(team: int, event_key: str) -> SeasonRate | None:
-    """Fallback: Statbotics EPA fuel component at the team's earlier events (same weighting as TBA)."""
-    start = _day(event_simple(event_key)["start_date"])
-    num = den = 0.0
-    evs = []
-    for e in prior_events(team, event_key):
-        d = _sb_get(f"/team_event/{team}/{e['key']}")
-        x = _sb_fuel((d or {}).get("epa")) if isinstance(d, dict) else None
-        if x is None:
-            continue
-        nq = ((d.get("record") or {}).get("qual") or {}).get("count") or 1
-        w = nq * 0.5 ** ((start - _day(e["end_date"])).days / HALF_LIFE_DAYS)
-        num += w * x
-        den += w
-        evs.append((e["key"], x, 1.0, nq, round(w, 3)))
-    return SeasonRate(num / den, den, evs, "statbotics") if den > 0 else None
 
 
 # ----------------------------------------------------------------------------- blend with the event's matches
 def prior_oprs(event_key: str, before: str | None = None, season_weight: float = None, half_life: float = None,
-               norm: bool = None, rates: dict | None = None) -> dict[int, float]:
+               norm: bool = None, rates: dict | None = None, source: str = None) -> dict[int, float]:
     """{team: fuel per match} for the event's teams: the event's fuel OPR from the quals played before `before`
     (None: none played yet), ridge-shrunk toward each team's season rate. The season rates are put on the
     event's scale by one least-squares factor over the alliance totals played so far (1 before the first);
@@ -216,7 +312,7 @@ def prior_oprs(event_key: str, before: str | None = None, season_weight: float =
     `rates` ({team: SeasonRate | None}) skips the season_rate lookups."""
     c = SEASON_WEIGHT if season_weight is None else season_weight
     if rates is None:
-        rates = {t: season_rate(t, event_key, half_life, norm) for t in event_teams(event_key)}
+        rates = {t: season_rate(t, event_key, half_life, norm, source) for t in event_teams(event_key)}
     ms = []
     if before is not None:
         cut = oprmod.match_order(tba.match(before))

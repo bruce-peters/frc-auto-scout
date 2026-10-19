@@ -20,6 +20,29 @@ def test_prior_events_only_finished_before_the_event(monkeypatch):
     assert [e["key"] for e in season.prior_events(1, "2026cc")] == ["2026a", "2026c"]
 
 
+def test_season_epa_follows_statbotics_update(monkeypatch):
+    def raw(key, t, level, red, blue, yr, yb):
+        return {"key": key, "comp_level": level, "set_number": 1, "match_number": 1, "actual_time": t,
+                "alliances": {"red": {"team_keys": [f"frc{x}" for x in red]}, "blue": {"team_keys": [f"frc{x}" for x in blue]}},
+                "score_breakdown": {"red": {"hubScore": {"totalCount": yr}}, "blue": {"hubScore": {"totalCount": yb}}}}
+
+    data = {"/events/2026/simple": [{"key": "2026a", "start_date": "2026-03-06", "end_date": "2026-03-08", "event_type": 1}],
+            "/event/2026a/matches": [raw("2026a_qm1", 100, "qm", [1, 2, 3], [4, 5, 6], 60, 30),
+                                     raw("2026a_sf1m1", 200, "sf", [1, 2, 3], [4, 5, 6], 90, 0)]}
+    monkeypatch.setattr(tba, "get", lambda path: data[path])
+    monkeypatch.setattr(season, "EPA_INIT_MATCHES", 1)
+    season.season_epa.cache_clear()
+    try:
+        h = season.season_epa(2026)
+    finally:
+        season.season_epa.cache_clear()
+    init = (60 + 30) / 2 / 3  # 15 per team
+    a1 = init + 1 / 3 * (60 - 3 * init) / 3  # first qual: learning rate 1/3 of the alliance error share
+    assert abs(h[1][0][1] - a1) < 1e-9 and abs(h[4][0][1] - (init + 1 / 3 * (30 - 3 * init) / 3)) < 1e-9
+    a2 = a1 + 1 / 3 * (1 / 3) * (90 - 3 * a1) / 3  # playoff: weight 1/3, qual count stays at 1 (rate still 1/3)
+    assert abs(h[1][1][1] - a2) < 1e-9 and [x[4] for x in h[1]] == [True, False]
+
+
 def test_prior_oprs_blends_season_rates_with_the_matches_played():
     truth = {1: 30.0, 2: 60.0, 3: 90.0, 4: 40.0, 5: 50.0, 6: 70.0}
     sched = [([1, 2, 3], [4, 5, 6]), ([1, 4, 5], [2, 3, 6]), ([1, 2, 6], [3, 4, 5]), ([1, 3, 5], [2, 4, 6]),

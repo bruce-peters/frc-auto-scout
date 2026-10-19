@@ -23,7 +23,12 @@ import numpy as np
 
 from .config import AUTO_LEN, ROOT, TELEOP_PERIODS
 
-LAG_LO, LAG_HI, LAG_PEAK = 0.8, 5.5, 2.8  # s from launch to counter increment (flight + ~2 s sensor/display lag)
+# s from launch to counter increment: ~1.1 s flight, then the hub counts a ball ~1.3 s after it drops into an idle
+# hub but at most ~15 balls/s, so in a hopper dump balls queue inside the hub (Chezy: 1.25 s for a burst's first 5
+# balls, 2.1 s median for balls 60+, 90th percentile 4.3 s). The measured launch-to-count peak is 2.4 s; the window
+# is wide for the queue (data/exp_hubentry/RESULTS_section.md; autoscout/hubentry.py re-times counted balls to
+# their hub entries)
+LAG_LO, LAG_HI, LAG_PEAK = 0.8, 5.5, 2.8
 PRIOR = 0.12
 GRACE = 3.0
 # Occlusion: a robot no camera can see cannot show launch arcs, so "no arcs seen" is weak
