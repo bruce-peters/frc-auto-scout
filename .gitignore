@@ -22,3 +22,6 @@ data/**
 !data/exp_launch/prod_signals.py
 !data/labels/*.json
 # data/scouting/: 5026's scouting export stays local (not in the public repo)
+
+# data packs built by scripts/pack_data.py (uploaded to a GitHub release, not versioned)
+dist/

@@ -1,0 +1,608 @@
+<title>auto-scout Replays</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=League+Spartan:wght@500;600;700&display=swap">
+<style>
+/* One broadcast column: score bar, the video with everything the system sees drawn on it, then live per-robot
+   credit. Same house style as the auto-scout inspector: near-black ground, tone steps instead of lines, fuel
+   yellow for "now" and actions, alliance colours only for data, every team a bumper plate. Dark only. */
+:root {
+  color-scheme: dark;
+  --ground: #0a0a0a;
+  --s1: #121212;
+  --s2: #191919;
+  --s3: #222222;
+  --s4: #2c2c2c;
+  --ink: #f2f2f2;
+  --ink-2: #b4b4b4;
+  --ink-3: #8f8f8f;
+  --accent: #ffcb1f;
+  --accent-ink: #171200;
+  --plate-ink: #0b0b0b;
+  --red: #f2471c;
+  --red-text: #ff7a59;
+  --red-field: #1d0f0b;
+  --blue: #7ea6d4;
+  --blue-text: #9dbbdf;
+  --blue-field: #0e141c;
+  --unknown: #9a9a9a;
+  --hatch: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='7' height='7'%3E%3Cpath d='M-1 8L8-1M-1 1L1-1M6 8L8 6' stroke='%23ffffff' stroke-opacity='.09' stroke-width='1'/%3E%3C/svg%3E");
+  --r: 4px;
+  --font: "Figtree", -apple-system, "Segoe UI", system-ui, sans-serif;
+  --display: "League Spartan", "Figtree", -apple-system, "Segoe UI", sans-serif;
+  --step-small: 13px;
+  --step-body: 15px;
+  --step-lead: 19px;
+  --step-head: clamp(28px, 4.2vw, 40px);
+  --step-display: clamp(40px, 6.5vw, 72px);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--ground); color: var(--ink); font: 400 var(--step-body)/1.55 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+.wrap {
+  max-width: 1120px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px; display: grid; gap: 28px;
+}
+h1, h2, h3 { margin: 0; font-family: var(--display); font-weight: 700; text-wrap: balance; letter-spacing: -0.01em; }
+p { margin: 0; }
+button { font: inherit; color: var(--ink); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eyebrow { font-size: var(--step-small); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+
+/* ------------------------------------------------------------ intro */
+.intro { display: grid; gap: 14px; }
+.brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.brand b { font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: 0.01em; }
+.brand span { color: var(--ink-3); font-size: var(--step-small); }
+.intro h1 { font-size: var(--step-display); line-height: 0.98; max-width: 16ch; }
+.intro h1 em { font-style: normal; color: var(--accent); }
+.intro p { color: var(--ink-2); font-size: var(--step-lead); max-width: 60ch; }
+
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; border-radius: var(--r); overflow: hidden; }
+.fact { background: var(--s1); padding: 16px 18px; display: grid; gap: 4px; align-content: start; min-width: 0; }
+.fact b { font-family: var(--display); font-weight: 600; font-size: clamp(28px, 4vw, 40px); line-height: 1; font-variant-numeric: tabular-nums; }
+.fact span { color: var(--ink-2); font-size: var(--step-small); }
+
+/* ------------------------------------------------------------ clip picker: one band per event */
+.picker { display: grid; gap: 14px; }
+.evgroup { display: grid; gap: 8px; }
+.evclips { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 2px; border-radius: var(--r); overflow: hidden; }
+.pick {
+  border: 0; background: var(--s1); text-align: left; padding: 12px 14px; cursor: pointer; display: grid; gap: 6px;
+  min-width: 0; transition: background-color .15s ease;
+}
+.pick:hover { background: var(--s2); }
+.pick[aria-selected="true"] { background: var(--s3); box-shadow: inset 0 -3px 0 var(--accent); }
+.pick .m { font-family: var(--display); font-weight: 600; font-size: 16px; }
+.pick .n { color: var(--ink-3); font-size: var(--step-small); line-height: 1.35; }
+.plates { display: flex; gap: 4px 10px; flex-wrap: wrap; }
+.plates .pl { display: inline-flex; gap: 4px; }
+
+.plate {
+  display: inline-block; font-family: var(--display); font-weight: 700; font-size: 12px; line-height: 1;
+  padding: 4px 6px 3px; border-radius: var(--r); color: var(--plate-ink); font-variant-numeric: tabular-nums;
+}
+.plate.hollow { background: transparent !important; box-shadow: inset 0 0 0 2px currentColor; }
+
+/* ------------------------------------------------------------ player */
+.player { display: grid; gap: 2px; border-radius: var(--r); overflow: hidden; }
+.scorebar { display: grid; grid-template-columns: 1fr auto 1fr; background: var(--s1); align-items: stretch; }
+.side { display: flex; align-items: center; gap: 12px; padding: 10px 16px; min-width: 0; }
+.side.red { background: var(--red-field); }
+.side.blue { background: var(--blue-field); justify-content: flex-end; }
+.side .num { font-family: var(--display); font-weight: 700; font-size: clamp(30px, 5vw, 48px); line-height: 1; font-variant-numeric: tabular-nums; }
+.side.red .num { color: var(--red-text); }
+.side.blue .num { color: var(--blue-text); }
+.side .sub { color: var(--ink-3); font-size: var(--step-small); line-height: 1.3; }
+.clock { padding: 10px 18px; display: grid; place-items: center; text-align: center; min-width: 96px; }
+.clock b { font-family: var(--display); font-weight: 600; font-size: clamp(22px, 3.4vw, 30px); line-height: 1; font-variant-numeric: tabular-nums; }
+.clock span { color: var(--ink-3); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+
+.stage { position: relative; background: #000; aspect-ratio: 16 / 9; max-width: 100%; }
+.stage video, .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.stage canvas { pointer-events: none; }
+
+.controls { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--s1); flex-wrap: wrap; }
+.play {
+  width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink);
+  display: grid; place-items: center; cursor: pointer; flex: none; transition: transform .12s var(--ease-out);
+}
+.play:active { transform: scale(.94); }
+.play svg { width: 18px; height: 18px; fill: currentColor; }
+.scrub { flex: 1 1 200px; min-width: 0; accent-color: var(--accent); }
+.time { font-family: var(--display); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink-2); min-width: 72px; text-align: right; }
+.tog {
+  border: 0; border-radius: var(--r); background: var(--s2); padding: 7px 10px; cursor: pointer; font-size: var(--step-small);
+  color: var(--ink-2); display: inline-flex; align-items: center; gap: 7px;
+}
+.tog i { width: 9px; height: 9px; border-radius: 2px; background: var(--s4); }
+.tog[aria-pressed="true"] { color: var(--ink); background: var(--s3); }
+.tog[aria-pressed="true"] i { background: var(--accent); }
+.toggles { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ------------------------------------------------------------ robots: live field map + one card per robot */
+.robots { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 2px; }
+.fieldwrap { background: var(--s1); padding: 12px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.fieldwrap canvas { width: 100%; aspect-ratio: 2.05 / 1; display: block; max-width: 100%; }
+.cap { color: var(--ink-3); font-size: 12.5px; line-height: 1.4; }
+.roster { display: grid; gap: 2px; min-width: 0; align-content: start; }
+.al { background: var(--s1); padding: 10px 12px 12px; display: grid; gap: 6px; min-width: 0; }
+.al h3 { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; font-family: var(--font); font-weight: 600; color: var(--ink-3); letter-spacing: 0.08em; text-transform: uppercase; }
+.cards { display: grid; gap: 4px; }
+.robot {
+  border: 0; border-radius: var(--r); background: var(--s2); color: var(--ink); text-align: left; cursor: pointer; width: 100%;
+  display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; grid-template-areas: "p bar v" "ph ph ph" "s s s";
+  align-items: center; gap: 5px 10px; padding: 8px 10px; transition: background-color .15s ease;
+}
+.robot:hover { background: var(--s3); }
+.robot[aria-pressed="true"] { background: var(--s3); box-shadow: inset 0 0 0 2px var(--accent); }
+.robot .plate { grid-area: p; justify-self: start; font-size: 13px; }
+.robot .bar { grid-area: bar; }
+.robot .v { grid-area: v; font-family: var(--display); font-weight: 600; font-variant-numeric: tabular-nums; font-size: 20px; line-height: 1; text-align: right; min-width: 40px; }
+.photos { grid-area: ph; display: flex; gap: 3px; min-width: 0; }
+.photos img { flex: 1 1 0; min-width: 0; height: 76px; object-fit: cover; border-radius: 2px; display: block; background: var(--s1); }
+.photos .none { color: var(--ink-3); font-size: 12px; background: var(--s1); background-image: var(--hatch); border-radius: 2px; padding: 8px 10px; flex: 1; }
+.robot .s { grid-area: s; color: var(--ink-2); font-size: 12.5px; line-height: 1.4; }
+.robot .s b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.bar { height: 10px; background: var(--s1); background-image: var(--hatch); border-radius: 2px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; transition: width .25s linear; }
+.foot { color: var(--ink-3); font-size: var(--step-small); }
+
+/* ------------------------------------------------------------ legend + explainer */
+.legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 2px; border-radius: var(--r); overflow: hidden; margin-top: 4px; }
+.key { background: var(--s2); padding: 12px 14px; display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 12px; align-items: start; }
+.key svg { width: 54px; height: 36px; }
+.key b { display: block; font-weight: 600; margin-bottom: 2px; }
+.key p { color: var(--ink-2); font-size: var(--step-small); }
+
+/* ------------------------------------------------------------ results: held-out error by version, then status */
+.results { display: grid; gap: 14px; }
+.results h2 { font-size: var(--step-head); }
+.results .lede { color: var(--ink-2); max-width: 70ch; }
+.chart { background: var(--s1); border-radius: var(--r); padding: 16px 18px; display: grid; gap: 12px; }
+.ch-head { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; font-weight: 600; color: var(--ink-3); letter-spacing: 0.08em; text-transform: uppercase; }
+.ch-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 2fr) 104px; grid-template-areas: "l b v"; align-items: center; gap: 6px 14px; }
+.ch-row .l { grid-area: l; font-size: 14px; }
+.ch-row .l small { display: block; color: var(--ink-3); font-size: 12px; }
+.track { grid-area: b; position: relative; height: 22px; background: var(--s2); background-image: var(--hatch); border-radius: 2px; }
+.track i { position: absolute; inset: 0 auto 0 0; background: var(--s4); border-radius: 2px; }
+.track .scouts { position: absolute; top: -4px; bottom: -4px; width: 0; border-left: 2px dashed var(--ink-3); }
+.ch-row.now .track i { background: var(--accent); }
+.ch-row .v { grid-area: v; text-align: right; }
+.ch-row .v b { font-family: var(--display); font-weight: 700; font-size: 24px; line-height: 1; font-variant-numeric: tabular-nums; }
+.ch-row.now .v b { color: var(--accent); }
+.ch-row .v small { display: block; color: var(--ink-3); font-size: 12px; }
+.ch-foot { color: var(--ink-3); font-size: 12.5px; display: flex; align-items: center; gap: 8px; }
+.ch-foot i { width: 0; height: 14px; border-left: 2px dashed var(--ink-3); }
+.status { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; border-radius: var(--r); overflow: hidden; }
+.st { background: var(--s1); padding: 14px 16px; display: grid; gap: 4px; align-content: start; min-width: 0; }
+.st .tag { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; display: flex; align-items: center; gap: 7px; }
+.st .tag::before { content: ""; width: 8px; height: 8px; border-radius: 1px; background: currentColor; }
+.st.met .tag { color: #3fcf7f; }
+.st.open .tag { color: #ff9a3c; }
+.st b { font-family: var(--display); font-weight: 600; font-size: 30px; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.st span { color: var(--ink-2); font-size: var(--step-small); }
+.left { display: grid; gap: 8px; margin: 0; padding-left: 18px; color: var(--ink-2); max-width: 75ch; }
+.left li::marker { color: var(--accent); }
+
+.how { display: grid; gap: 14px; }
+.how h2 { font-size: var(--step-head); }
+.steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; border-radius: var(--r); overflow: hidden; counter-reset: s; }
+.step { background: var(--s1); padding: 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.step::before { counter-increment: s; content: counter(s); font-family: var(--display); font-weight: 700; color: var(--accent); font-size: 22px; line-height: 1; }
+.step b { font-weight: 600; }
+.step p { color: var(--ink-2); font-size: var(--step-small); }
+.fine { color: var(--ink-3); font-size: var(--step-small); max-width: 75ch; }
+
+@media (max-width: 760px) {
+  .facts, .steps { grid-template-columns: 1fr; }
+  .status { grid-template-columns: 1fr 1fr; }
+  .ch-row { grid-template-columns: minmax(0, 1fr) 84px; grid-template-areas: "l l" "b v"; }
+  .robots { grid-template-columns: 1fr; }
+  .side { padding: 8px 10px; gap: 8px; }
+  .side .sub { display: none; }
+  .clock { min-width: 72px; padding: 8px 10px; }
+}
+@media (prefers-reduced-motion: reduce) { .bar i { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header class="intro">
+    <div class="brand"><b>auto-scout</b><span>FRC 5026 &middot; 2026 REBUILT</span></div>
+    <h1>Per-robot fuel, read straight off the <em>broadcast</em>.</h1>
+    <p>No scouts in the stands. auto-scout watches the match video, works out which robot is which, follows every ball that gets launched, and splits the official scoreboard among the robots that shot.</p>
+    <div class="facts">
+      <div class="fact"><b>3%</b><span>Alliance fuel totals vs the official hub counts (260 alliance-matches)</span></div>
+      <div class="fact"><b>96.7%</b><span>Robots identified correctly, checked against bumper numbers held out</span></div>
+      <div class="fact"><b>~40</b><span>Balls off per robot per match vs human scouting. Two human scouts differ by ~46</span></div>
+    </div>
+  </header>
+
+  <section class="picker" aria-label="Match clips" id="picker"></section>
+
+  <section class="player" aria-label="Match replay">
+    <div class="scorebar">
+      <div class="side red"><span class="num" id="redNum">0</span><span class="sub" id="redSub"></span></div>
+      <div class="clock"><span id="phase">Auto</span><b id="clock">0:20</b></div>
+      <div class="side blue"><span class="sub" id="blueSub" style="text-align:right"></span><span class="num" id="blueNum">0</span></div>
+    </div>
+    <div class="stage">
+      <video id="video" playsinline muted preload="auto"></video>
+      <canvas id="overlay"></canvas>
+    </div>
+    <div class="controls">
+      <button class="play" id="play" aria-label="Play"></button>
+      <input class="scrub" id="scrub" type="range" min="0" max="30" step="0.01" value="0" aria-label="Clip position">
+      <span class="time" id="time">0.0 s</span>
+      <div class="toggles">
+        <button class="tog" id="tBoxes" aria-pressed="true"><i></i>Robot boxes</button>
+        <button class="tog" id="tArcs" aria-pressed="true"><i></i>Launch arcs</button>
+        <button class="tog" id="tInf" aria-pressed="true"><i></i>Inferred</button>
+        <button class="tog" id="tSlow" aria-pressed="false"><i></i>Half speed</button>
+      </div>
+    </div>
+    <div class="robots">
+      <div class="fieldwrap">
+        <canvas id="field" role="img" aria-label="Top-down field map with every robot's position"></canvas>
+        <p class="cap">Top down, blue alliance wall on the left. Each dot is a robot with its last 3 s of path, hollow while no camera sees it; rings mark where launches left from. Tap a robot card to follow it. Robot photos are cut from the broadcast at moments its bumper number was read.</p>
+        <div class="legend" aria-label="What the marks mean">
+          <div class="key">
+            <svg viewBox="0 0 54 36" aria-hidden="true"><rect x="8" y="12" width="38" height="20" fill="none" stroke="#5cc4ae" stroke-width="2.5"/><rect x="8" y="3" width="24" height="10" rx="2" fill="#5cc4ae"/></svg>
+            <div><b>Identified robot</b><p>Its box in its team colour with a solid number plate. Team read from bumper numbers and recognised by its look.</p></div>
+          </div>
+          <div class="key">
+            <svg viewBox="0 0 54 36" aria-hidden="true"><rect x="8" y="12" width="38" height="20" fill="none" stroke="#5cc4ae" stroke-width="2.5" stroke-dasharray="5 4"/><rect x="9" y="4" width="22" height="8" rx="2" fill="#0a0a0a" stroke="#5cc4ae" stroke-width="2"/></svg>
+            <div><b>Inferred by elimination</b><p>Dashed, with a hollow plate. The robot or shot could not be identified directly, but the alliance's other two robots are seen somewhere else, so it must be the third.</p></div>
+          </div>
+          <div class="key">
+            <svg viewBox="0 0 54 36" aria-hidden="true"><path d="M8 32 Q 22 -6 46 14" fill="none" stroke="#ff9a3c" stroke-width="3"/><circle cx="46" cy="14" r="3.5" fill="#ff9a3c"/></svg>
+            <div><b>Launch arc</b><p>A ball leaving a robot, followed frame by frame and coloured by the robot it came from.</p></div>
+          </div>
+          <div class="key">
+            <svg viewBox="0 0 54 36" aria-hidden="true"><rect x="8" y="12" width="38" height="20" fill="none" stroke="#9a9a9a" stroke-width="2.5" stroke-dasharray="5 4"/><rect x="8" y="3" width="12" height="10" rx="2" fill="#9a9a9a"/></svg>
+            <div><b>Robot, team unknown</b><p>A robot box the system cannot place yet, usually at the edge of the picture.</p></div>
+          </div>
+        </div>
+      </div>
+      <div class="roster">
+        <div class="al"><h3><span>Red alliance</span><span>credited so far</span></h3><div class="cards" id="redRows"></div></div>
+        <div class="al"><h3><span>Blue alliance</span><span>credited so far</span></h3><div class="cards" id="blueRows"></div></div>
+      </div>
+    </div>
+  </section>
+  <p class="foot" id="foot"></p>
+
+
+  <section class="results" aria-labelledby="res-h">
+    <h2 id="res-h">How close it gets</h2>
+    <p class="lede">Checked against FRC 5026's own scouting of 54 Chezy Champs qualification matches, where every robot was scouted, most of them by two people. The chart is held out: for each match, the credit model was fitted without it.</p>
+    <div class="chart" role="img" aria-label="Balls off per robot per match against the scouts: hand-tuned rule 50.9, credit model 42.4, with process of elimination 41.2, with 60 fps ball tracking 39.8. Two human scouts differ by about 46.">
+      <div class="ch-head"><span>Balls off per robot per match</span><span>lower is better</span></div>
+      <div class="ch-row"><span class="l">Hand-tuned rule<small>first version</small></span><span class="track"><i style="width:92.5%"></i><span class="scouts" style="left:83.5%"></span></span><span class="v"><b>50.9</b><small>top scorer 61%</small></span></div>
+      <div class="ch-row"><span class="l">Credit model<small>fitted to the scouting, video evidence only</small></span><span class="track"><i style="width:77.1%"></i><span class="scouts" style="left:83.5%"></span></span><span class="v"><b>42.4</b><small>top scorer 64%</small></span></div>
+      <div class="ch-row"><span class="l">+ Process of elimination<small>unidentified robots and box-less launches</small></span><span class="track"><i style="width:74.9%"></i><span class="scouts" style="left:83.5%"></span></span><span class="v"><b>41.2</b><small>top scorer 69%</small></span></div>
+      <div class="ch-row now"><span class="l">+ 60 fps ball tracking<small>today</small></span><span class="track"><i style="width:72.3%"></i><span class="scouts" style="left:83.5%"></span></span><span class="v"><b>39.8</b><small>top scorer 70%</small></span></div>
+      <div class="ch-foot"><i></i>Two human scouts watching the same robot differ by about 46. Scale runs from 0 to 55 balls.</div>
+    </div>
+    <div class="status">
+      <div class="st met"><span class="tag">Goal met</span><b>3%</b><span>Alliance fuel totals vs the official count. The goal was 15%.</span></div>
+      <div class="st met"><span class="tag">Strong</span><b>96.7%</b><span>Robots identified correctly, against bumper numbers held out.</span></div>
+      <div class="st open"><span class="tag">Not there yet</span><b>~20%</b><span>Median per-robot fuel error. The target is about 15%.</span></div>
+      <div class="st open"><span class="tag">Not there yet</span><b>70%</b><span>Alliance top scorer picked correctly.</span></div>
+    </div>
+    <ul class="left">
+      <li><b>The main error left:</b> in bursts where one robot shoots, about a third of the arcs get credited to a teammate standing next to it. Picking the right robot for each arc is the next piece of work.</li>
+      <li>Some shooters are never seen by any camera, for example a robot parked right under an end camera. They still get an estimated share from the robots that are not accounted for.</li>
+      <li>Balls are tracked at 60 frames a second where the webcast really has 60 pictures a second (every Chezy match and some Championship ones). Most FIRST webcasts repeat each picture of a 30 fps stream, so those stay at 30.</li>
+    </ul>
+  </section>
+
+  <section class="how">
+    <h2>How a ball gets credited</h2>
+    <div class="steps">
+      <div class="step"><b>Read the scoreboard</b><p>The broadcast's live fuel counter gives each alliance's total and the moment every ball counted.</p></div>
+      <div class="step"><b>Find every robot</b><p>A detector boxes robots in all three camera views. Bumper numbers and appearance tie each track to a team.</p></div>
+      <div class="step"><b>Follow every ball</b><p>Yellow fuel is tracked in the air. Arcs that rise out of a robot are counted as its launches.</p></div>
+      <div class="step"><b>Split each jump</b><p>When the counter goes up, those balls go to the robots that launched in the seconds before, using only that match's video.</p></div>
+    </div>
+    <p class="fine" id="fine">Numbers are from 131 matches across five 2026 events. Per-robot credit uses only that match's video: no OPR, no team history, nothing from later matches, so it works live at a new event.</p>
+  </section>
+</div>
+
+<script>
+(() => {
+  const PERIODS = [["Transition", 0, 10], ["Shift 1", 10, 35], ["Shift 2", 35, 60], ["Shift 3", 60, 85], ["Shift 4", 85, 110], ["Endgame", 110, 140]];
+  const ICON = {
+    play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h4.5v16H6zM13.5 4H18v16h-4.5z"/></svg>',
+  };
+  const $ = (id) => document.getElementById(id);
+  const video = $("video"), canvas = $("overlay"), ctx = canvas.getContext("2d");
+  const S = { data: {}, cur: null, layers: { boxes: true, arcs: true, inf: true }, raf: 0 };
+
+  function plateHTML(team, col, hollow) {
+    return `<span class="plate${hollow ? " hollow" : ""}" style="background:${col};${hollow ? `color:${col}` : ""}">${team}</span>`;
+  }
+
+  async function load(name) {
+    if (!S.data[name]) {
+      const r = await fetch(`${name}.json`);
+      if (!r.ok) throw new Error(`could not load ${name}.json (${r.status})`);
+      S.data[name] = await r.json();
+    }
+    return S.data[name];
+  }
+
+  function bsearch(arr, t) { let lo = 0, hi = arr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] <= t) lo = m + 1; else hi = m; } return lo; }
+
+  // the picker comes from a small index (clips.json); a clip's overlay data and video load when it is picked
+  async function buildPicker() {
+    const r = await fetch("clips.json");
+    if (!r.ok) throw new Error(`could not load the clip list (${r.status})`);
+    const metas = await r.json(), pk = $("picker"), groups = new Map();
+    for (const m of metas) {
+      if (!groups.has(m.event)) {
+        const g = document.createElement("div"); g.className = "evgroup";
+        g.innerHTML = `<div class="eyebrow">${m.event}</div><div class="evclips" role="tablist" aria-label="${m.event}"></div>`;
+        pk.appendChild(g); groups.set(m.event, g.querySelector(".evclips"));
+      }
+      const b = document.createElement("button");
+      b.className = "pick"; b.setAttribute("role", "tab"); b.id = `pick-${m.name}`;
+      b.setAttribute("aria-selected", "false");
+      const plates = ["red", "blue"].map((al) => `<span class="pl">${m.teams[al].map((t) => plateHTML(t, m.colors[t], false)).join("")}</span>`).join("");
+      b.innerHTML = `<span class="m">${m.label}</span><span class="plates">${plates}</span><span class="n">${m.note}</span>`;
+      b.addEventListener("click", () => select(m.name));
+      groups.get(m.event).appendChild(b);
+    }
+    if (metas.length) await select(metas[0].name);
+  }
+
+  async function select(name) {
+    for (const b of document.querySelectorAll(".pick")) b.setAttribute("aria-selected", String(b.id === `pick-${name}`));
+    S.want = name;
+    let d;
+    try { d = await load(name); } catch (err) { $("foot").textContent = `This clip did not load: ${err.message}. Pick it again to retry.`; return; }
+    if (S.want !== name) return;  // another clip was picked while this one loaded
+    d.name = name;
+    S.cur = d;
+    d.frameT = d.frames.map((f) => f[0]);
+    d.creditSorted = d.credit.slice().sort((a, b) => a[0] - b[0]);
+    setVideo(name);
+    $("scrub").max = String(d.dur);
+    S.sel = null;
+    for (const al of ["red", "blue"]) {
+      $(`${al}Rows`).innerHTML = d.teams[al].map((t) => {
+        const R = d.robots?.[t];
+        const stats = R ? `Whole match <b>${R.fuel}</b> fuel, ${Math.round(R.share * 100)}% of the alliance: auto <b>${R.auto}</b>, teleop <b>${R.teleop}</b>. <b>${R.launches}</b> launch arcs seen across the 3 cameras${R.inferred ? `, ${R.inferred} tied to it by elimination` : ""}.` : "";
+        const cam = { main: "main camera", red_end: "red end camera", blue_end: "blue end camera" };
+        const photos = R?.crops?.length
+          ? R.crops.map((c) => `<img src="${c.src}" loading="lazy" width="${c.w}" height="${c.h}" alt="${t} on the ${cam[c.view] || c.view}, ${c.clock}" title="${cam[c.view] || c.view}, ${c.clock}${c.read ? ", bumper number read" : ""}">`).join("")
+          : `<span class="none">No clear photo: its bumper number was never read in this match.</span>`;
+        return `<button class="robot" data-team="${t}" aria-pressed="false">${plateHTML(t, d.colors[t], false)}<span class="bar"><i style="background:${d.colors[t]}"></i></span><span class="v">0</span><span class="photos">${photos}</span><span class="s">${stats}</span></button>`;
+      }).join("");
+      $(`${al}Sub`).innerHTML = d.tba[al] != null ? `of ${d.tba[al]} fuel<br>official count` : "";
+    }
+    for (const b of document.querySelectorAll(".robot")) {
+      b.addEventListener("click", () => {
+        const tm = Number(b.dataset.team);
+        S.sel = S.sel === tm ? null : tm;
+        for (const o of document.querySelectorAll(".robot")) o.setAttribute("aria-pressed", String(Number(o.dataset.team) === S.sel));
+        draw();
+      });
+    }
+    const counted = d.elim_counted ? "Inferred launches are counted." : "Inferred launches are drawn but not yet counted while they are being validated.";
+    $("foot").textContent = `${d.title}: a 30 s window of the match. Bars show fuel credited from the start of the match up to this moment. ${counted}`;
+    draw();
+  }
+
+  // clips play from an in-memory copy so seeking works on any host (no range requests needed)
+  const blobs = {};
+  async function setVideo(name) {
+    video.pause();
+    try {
+      if (!blobs[name]) {
+        const r = await fetch(`${name}.mp4`);
+        if (!r.ok) throw new Error(String(r.status));
+        blobs[name] = URL.createObjectURL(await r.blob());
+      }
+      if (S.cur?.name === name) video.src = blobs[name];
+    } catch (e) {
+      video.src = `${name}.mp4`;
+    }
+  }
+
+  function countAt(list, t) { let c = 0; for (const [vt, n] of list) { if (vt <= t) c = n; else break; } return c; }
+
+  function clockAt(d, vt) {
+    if (vt < d.a0) return ["Pre-match", "2:40"];
+    let mt = d.ts != null && vt >= d.ts ? 20 + vt - d.ts : vt - d.a0;
+    if (mt < 20) return ["Auto", fmtClock(20 - mt)];
+    const tt = mt - 20;
+    const p = PERIODS.find(([, a, b]) => tt >= a && tt < b) || ["Endgame", 110, 140];
+    return [p[0], fmtClock(Math.max(0, 140 - tt))];
+  }
+  function fmtClock(s) { s = Math.ceil(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+
+  function sizeCanvas() {
+    const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    return [w, h, dpr];
+  }
+
+  function plate(txt, x, y, col, size, hollow) {
+    ctx.font = `700 ${size}px "League Spartan", "Figtree", sans-serif`;
+    const w = ctx.measureText(txt).width, ph = Math.round(size * 1.3), pw = w + size * 0.7;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y - ph, pw, ph, 3); else ctx.rect(x, y - ph, pw, ph);
+    ctx.setLineDash([]);
+    if (hollow) { ctx.fillStyle = "rgba(10,10,10,.85)"; ctx.fill(); ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.5, size / 7); ctx.stroke(); ctx.fillStyle = col; }
+    else { ctx.fillStyle = col; ctx.fill(); ctx.fillStyle = "#0b0b0b"; }
+    ctx.textBaseline = "alphabetic"; ctx.fillText(txt, x + size * 0.35, y - ph * 0.22);
+  }
+
+  function draw() {
+    const d = S.cur; if (!d) return;
+    const t = video.currentTime || 0;
+    const [W, H, dpr] = sizeCanvas();
+    ctx.clearRect(0, 0, W, H);
+    const lw = Math.max(1.5, W / 640), ps = Math.max(10, Math.round(W / 70));
+    // robot boxes: the detection frame nearest the playhead
+    if (S.layers.boxes && d.frameT.length) {
+      let i = bsearch(d.frameT, t);
+      const cands = [i - 1, i].filter((k) => k >= 0 && k < d.frames.length);
+      const k = cands.sort((a, b) => Math.abs(d.frameT[a] - t) - Math.abs(d.frameT[b] - t))[0];
+      if (k != null && Math.abs(d.frameT[k] - t) < 0.25) {
+        for (const [x0, y0, x1, y1, , team, inf] of d.frames[k][1]) {
+          const shown = team ?? (S.layers.inf ? inf : null), hollow = team == null && shown != null;
+          const col = shown != null ? d.colors[shown] : "#9a9a9a";
+          ctx.globalAlpha = S.sel != null && shown !== S.sel ? 0.22 : 1;
+          ctx.lineWidth = lw * 1.6; ctx.strokeStyle = col;
+          ctx.setLineDash(team == null ? [lw * 5, lw * 3.5] : []);
+          ctx.strokeRect(x0 * W, y0 * H, (x1 - x0) * W, (y1 - y0) * H); ctx.setLineDash([]);
+          plate(shown != null ? String(shown) : "?", x0 * W - 1, y0 * H - 1, col, ps, hollow);
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+    // launch arcs: drawn as they fly, fading out after landing
+    if (S.layers.arcs) {
+      const drawn = [];
+      ctx.lineCap = "round"; ctx.lineJoin = "round";
+      for (const s of d.shots) {
+        if (s.t > t || s.inf && !S.layers.inf) continue;
+        const last = s.pts[s.pts.length - 1][0];
+        if (t > last + 0.6) continue;
+        const pts = s.pts.filter((p) => p[0] <= t); if (pts.length < 2) continue;
+        const col = s.team != null ? d.colors[s.team] : "#ffffff";
+        const fade = S.sel != null && s.team !== S.sel ? 0.18 : 1;
+        ctx.globalAlpha = fade * (t > last ? Math.max(0, 1 - (t - last) / 0.6) : 1);
+        ctx.strokeStyle = col; ctx.lineWidth = lw * 2.2;
+        ctx.setLineDash(s.inf ? [lw * 5, lw * 3.5] : []);
+        ctx.beginPath(); pts.forEach((p, j) => (j ? ctx.lineTo(p[1] * W, p[2] * H) : ctx.moveTo(p[1] * W, p[2] * H))); ctx.stroke();
+        ctx.setLineDash([]);
+        const e = pts[pts.length - 1]; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(e[1] * W, e[2] * H, lw * 2.6, 0, 7); ctx.fill();
+        ctx.globalAlpha = 1;
+        if (s.team != null && fade === 1) {  // one plate per robot and spot, at the launch point
+          const x = pts[0][1] * W + lw * 3, y = pts[0][2] * H - lw * 2, near = ps * 2.4;
+          if (!drawn.some((q) => q.team === s.team && q.inf === s.inf && Math.abs(q.x - x) < near && Math.abs(q.y - y) < near)) {
+            drawn.push({ team: s.team, inf: s.inf, x, y });
+            plate(String(s.team), x, y, col, Math.round(ps * 0.8), s.inf);
+          }
+        }
+      }
+    }
+    // score bar, clock, live credit
+    $("redNum").textContent = countAt(d.counts.red, t);
+    $("blueNum").textContent = countAt(d.counts.blue, t);
+    const [ph, cl] = clockAt(d, t); $("phase").textContent = ph; $("clock").textContent = cl;
+    const got = {};
+    for (const [ct, tm, b] of d.creditSorted) { if (ct > t) break; got[tm] = (got[tm] || 0) + b; }
+    const top = Math.max(1, ...Object.values(d.final));
+    for (const row of document.querySelectorAll(".robot")) {
+      const tm = row.dataset.team, v = got[tm] || 0;
+      row.querySelector(".v").textContent = Math.round(v);
+      row.querySelector(".bar i").style.width = `${Math.min(100, (100 * v) / top)}%`;
+    }
+    drawField(d, t);
+    $("scrub").value = String(t);
+    $("time").textContent = `${t.toFixed(1)} s`;
+    const paused = video.paused, pb = $("play");
+    if (pb.dataset.state !== String(paused)) { pb.dataset.state = String(paused); pb.innerHTML = paused ? ICON.play : ICON.pause; pb.setAttribute("aria-label", paused ? "Play" : "Pause"); }
+  }
+
+  // top-down field: alliance zones, hubs, each robot's recent path and position, and where launches left from
+  const fc = $("field"), fx = fc.getContext("2d");
+  function drawField(d, t) {
+    if (!d.field || !d.paths) return;
+    const r = fc.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+    if (!w || !h) return;
+    if (fc.width !== w || fc.height !== h) { fc.width = w; fc.height = h; }
+    const F = d.field, pad = 4 * dpr, s = Math.min((w - 2 * pad) / F.L, (h - 2 * pad) / F.W);
+    const ox = (w - F.L * s) / 2, oy = (h - F.W * s) / 2;
+    const P = (x, y) => [ox + x * s, oy + (F.W - y) * s];
+    fx.clearRect(0, 0, w, h);
+    fx.fillStyle = "#171717"; fx.fillRect(ox, oy, F.L * s, F.W * s);
+    fx.fillStyle = "#0e141c"; fx.fillRect(ox, oy, F.zone * s, F.W * s);
+    fx.fillStyle = "#1d0f0b"; fx.fillRect(ox + (F.L - F.zone) * s, oy, F.zone * s, F.W * s);
+    fx.strokeStyle = "#2c2c2c"; fx.lineWidth = dpr;
+    fx.beginPath(); fx.moveTo(...P(F.L / 2, 0)); fx.lineTo(...P(F.L / 2, F.W)); fx.stroke();
+    for (const [c, col] of [[F.blueHub, "#7ea6d4"], [F.redHub, "#f2471c"]]) {
+      const [hx, hy] = P(c[0] - F.hub, c[1] + F.hub);
+      fx.strokeStyle = col; fx.lineWidth = 2 * dpr; fx.strokeRect(hx, hy, 2 * F.hub * s, 2 * F.hub * s);
+    }
+    // launch spots: the last 4 s, or everything so far for a followed robot
+    for (const sh of d.shots) {
+      if (sh.fx == null || sh.t > t || (sh.inf && !S.layers.inf)) continue;
+      const mine = S.sel != null && sh.team === S.sel, age = t - sh.t;
+      if (S.sel != null ? !mine : age > 4) continue;
+      const [x, y] = P(sh.fx, sh.fy);
+      fx.globalAlpha = mine ? 0.85 : Math.max(0.12, 1 - age / 4);
+      fx.strokeStyle = d.colors[sh.team]; fx.lineWidth = 1.5 * dpr;
+      fx.beginPath(); fx.arc(x, y, 0.3 * s, 0, 7); fx.stroke();
+    }
+    fx.globalAlpha = 1;
+    // robots: recent path (gaps where it was not seen) and its position now
+    const fs = Math.max(10 * dpr, Math.round(0.62 * s));
+    fx.font = `700 ${fs}px "League Spartan", "Figtree", sans-serif`; fx.textBaseline = "middle";
+    for (const tm of [...d.teams.red, ...d.teams.blue]) {
+      const p = d.paths[tm]; if (!p || !p.length) continue;
+      const pT = p.tT || (p.tT = p.map((q) => q[0]));
+      const i = bsearch(pT, t) - 1; if (i < 0) continue;
+      const col = d.colors[tm], dim = S.sel != null && tm !== S.sel, span = tm === S.sel ? 30 : 3;
+      fx.globalAlpha = dim ? 0.12 : 0.6; fx.strokeStyle = col; fx.lineWidth = 2 * dpr; fx.beginPath();
+      let prev = null;
+      for (let k = i; k >= 0 && p[k][0] >= t - span; k--) {
+        const [x, y] = P(p[k][1], p[k][2]);
+        if (prev == null || prev - p[k][0] > 0.6) fx.moveTo(x, y); else fx.lineTo(x, y);
+        prev = p[k][0];
+      }
+      fx.stroke();
+      const stale = t - p[i][0];
+      if (stale > 6) { fx.globalAlpha = 1; continue; }
+      const [x, y] = P(p[i][1], p[i][2]);
+      fx.globalAlpha = dim ? 0.3 : 1;
+      fx.beginPath(); fx.arc(x, y, 0.42 * s, 0, 7);
+      if (stale > 1) { fx.strokeStyle = col; fx.lineWidth = 2 * dpr; fx.stroke(); } else { fx.fillStyle = col; fx.fill(); }
+      fx.fillStyle = col; fx.fillText(String(tm), x + 0.55 * s, y - 0.55 * s);
+      fx.globalAlpha = 1;
+    }
+  }
+
+  function loop() { draw(); S.raf = video.paused ? 0 : requestAnimationFrame(loop); }
+  video.addEventListener("play", () => { if (!S.raf) S.raf = requestAnimationFrame(loop); });
+  video.addEventListener("pause", draw);
+  video.addEventListener("seeked", draw);
+  video.addEventListener("loadeddata", draw);
+  video.addEventListener("ended", draw);
+  window.addEventListener("resize", draw);
+  $("play").addEventListener("click", () => { if (video.paused) video.play().catch(() => {}); else video.pause(); });
+  $("scrub").addEventListener("input", (e) => { video.currentTime = Number(e.target.value); draw(); });
+  const toggles = { tBoxes: "boxes", tArcs: "arcs", tInf: "inf" };
+  for (const [id, k] of Object.entries(toggles)) {
+    $(id).addEventListener("click", (e) => { S.layers[k] = !S.layers[k]; e.currentTarget.setAttribute("aria-pressed", String(S.layers[k])); draw(); });
+  }
+  $("tSlow").addEventListener("click", (e) => {
+    const slow = video.playbackRate === 1; video.playbackRate = slow ? 0.5 : 1;
+    e.currentTarget.setAttribute("aria-pressed", String(slow));
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT" && e.key !== " ") return;
+    if (e.key === " ") { e.preventDefault(); $("play").click(); }
+  });
+  $("play").innerHTML = ICON.play;
+  buildPicker().catch((err) => { $("foot").textContent = `The match clips did not load: ${err.message}. Reload the page to try again.`; });
+  window.addEventListener("keydown", (e) => {  // left / right arrows step through the clips
+    if (e.target.tagName === "INPUT" || !(e.key === "ArrowRight" || e.key === "ArrowLeft")) return;
+    const picks = [...document.querySelectorAll(".pick")], i = picks.findIndex((b) => b.getAttribute("aria-selected") === "true");
+    const j = i + (e.key === "ArrowRight" ? 1 : -1);
+    if (j >= 0 && j < picks.length) { picks[j].click(); picks[j].focus(); }
+  });
+})();
+</script>

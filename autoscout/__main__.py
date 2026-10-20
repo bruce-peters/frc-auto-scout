@@ -1,5 +1,6 @@
 """CLI:  python -m autoscout <match_key> [<match_key> ...] [--debug]
         python -m autoscout --team 5026 --event 2026casnv
+        python -m autoscout 2026cc_qm54 --reanalyse     # from the cached scan: seconds, no video or GPU
 """
 from __future__ import annotations
 
@@ -15,6 +16,8 @@ def main():
     ap.add_argument("--event")
     ap.add_argument("--model", default=None, help="robot detector weights")
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--reanalyse", action="store_true",
+                    help="re-run tracking, identity and fuel credit from output/<match>/scan.pkl (no video needed)")
     a = ap.parse_args()
     keys = list(a.matches)
     if a.event:
@@ -25,7 +28,7 @@ def main():
         opts.robot_model = a.model
     for k in keys:
         try:
-            res = pipeline.process_match(k, opts)
+            res = pipeline.reanalyse(k, opts) if a.reanalyse else pipeline.process_match(k, opts)
         except Exception as e:  # keep going over a batch
             print(f"{k}: FAILED {e!r}")
             if a.debug:

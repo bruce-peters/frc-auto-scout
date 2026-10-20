@@ -12,6 +12,8 @@ VIDEOS = DATA / "videos"
 CACHE = DATA / "cache"
 MODELS = ROOT / "models"
 OUTPUT = ROOT / "output"
+# 60 Hz fuel blob logs, one gzip pickle per match (data/exp_track/tools/rescan60.py; read by autoscout/tracks60.py)
+BLOBS60 = Path(os.environ.get("AUTOSCOUT_BLOBS60", str(DATA / "exp_track" / "blobs60")))
 
 load_dotenv(ROOT / ".env")
 TBA_API_KEY = os.environ.get("TBA_API_KEY", "")

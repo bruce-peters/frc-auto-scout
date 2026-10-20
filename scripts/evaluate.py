@@ -188,9 +188,10 @@ def write_results_md(rows, team_rows, errs_o, shares_a, shares_o, abs_err, base_
              "match's split uses only that match's video: no OPR or other team history moves balls between "
              "teams. Nothing uses an event's later matches either: the DINO robot recognizer only learns from "
              "matches already played, as it would live. A robot or launch no camera can identify goes, by "
-             "elimination, to the one robot of its alliance not seen anywhere else. Against the scouting the per-team "
-             "numbers are off by ~41 fuel per team-match held out (the older hand-tuned rule on the same evidence: "
-             "~47); arcs credited to a teammate standing next to the shooter, and shooters no camera sees, are the "
+             "elimination, to the one robot of its alliance not seen anywhere else. Balls are tracked at 60 frames a "
+             "second where the webcast really has 60 pictures a second (every Chezy match, some Championship ones); "
+             "most FIRST webcasts show each 30 fps picture twice, and those stay at 30. Against the scouting the per-team numbers are off by ~40 fuel per team-match held out (the "
+             "older hand-tuned rule on the same evidence: ~46); arcs credited to a teammate standing next to the shooter, and shooters no camera sees, are the "
              "main error sources. "
              "A pure vision hub counter "
              "(no overlay) was built and evaluated but is ~30 % off, so it is only a fallback.", ""]

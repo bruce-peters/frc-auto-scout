@@ -1581,6 +1581,28 @@ def load_dino(md: MatchData, match_dir: Path) -> bool:
     return True
 
 
+# 60 Hz flight tracks (data/exp_track/RESULTS_section.md): FUEL tracked on every frame instead of every other
+# one separates the balls of a volley; on 54 scouted quals with process-of-elimination linking, refit fuel MAE
+# 41.2 -> 39.8 (paired 95 % CI -2.67 .. -0.22). Rebuilt from config.BLOBS60 logs (autoscout/tracks60.py); a
+# match without one keeps its scan's 30 Hz tracks. result.json records which: "fuel_hz".
+FUEL_60HZ = True
+# ... true 60p video only: tracks60.load returns None for a webcast of 30p pictures shown twice (most FIRST-production
+# events), which keeps its 30 Hz tracks
+
+
+def load_fuel60(md: MatchData) -> int:
+    """With FUEL_60HZ, swap in the match's 60 Hz flight tracks when it has a 60 Hz blob log; sets and returns
+    md.fuel_hz (60 or 30). Call after loading a scan, like load_dino; the scan's own tracks are md.tracks_30."""
+    md.fuel_hz = 30
+    if FUEL_60HZ:
+        from . import tracks60
+
+        tracks = tracks60.load(md.key)
+        if tracks is not None:
+            md.tracks_30, md.tracks_all, md.fuel_hz = md.tracks_all, tracks, 60
+    return md.fuel_hz
+
+
 # Cross-match DINOv2 probe (scripts/build_dino_probe.py, Options.w_dino): for every crop, log-probabilities
 # over each alliance's 3 teams from a linear probe on frozen DINOv2 features (labels: segments with clear bumper
 # reads). One <match>.npz per match in this folder. "causal" (build_dino_probe.py probe --causal, no hindsight):
@@ -1609,8 +1631,13 @@ def reanalyse(key: str, opts: Options | None = None) -> dict:
     with open(out_dir / "scan.pkl", "rb") as fh:
         md = pickle.load(fh)
     load_dino(md, out_dir)
+    load_fuel60(md)
     n_ocr = len(getattr(md, "ocr_cache", None) or {})
     res = analyse(md, opts)
+    res["fuel_hz"] = md.fuel_hz
+    if md.fuel_hz == 60:  # a scan saved below keeps its own 30 Hz tracks
+        md.tracks_all = md.tracks_30
+        del md.tracks_30
     old = json.loads((out_dir / "result.json").read_text()) if (out_dir / "result.json").exists() else {}
     res["runtime_s"] = old.get("runtime_s")
     (out_dir / "result.json").write_text(json.dumps(res, indent=1, default=_json_default))

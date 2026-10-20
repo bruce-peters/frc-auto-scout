@@ -1,0 +1,18 @@
+# auto-scout, Python 3.10-3.12. scripts/setup.py installs these into .venv (with --cuda it installs the CUDA build
+# of torch / torchvision first, from the PyTorch index). Versions are the ones the results were produced with or
+# newer.
+numpy>=2.0
+scipy>=1.13
+opencv-python>=4.10
+torch>=2.4
+torchvision>=0.19
+ultralytics>=8.3
+easyocr>=1.7.2
+matplotlib>=3.9
+pandas>=2.2
+pillow>=10.4
+pyyaml>=6.0
+requests>=2.32
+python-dotenv>=1.0
+yt-dlp>=2025.1.1
+pytest>=8.0

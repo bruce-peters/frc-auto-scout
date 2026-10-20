@@ -1,12 +1,123 @@
 # auto-scout
 
-Automated scouting of FRC 2026 **REBUILT** matches from the official match videos linked on
-The Blue Alliance. For every team in a match it estimates FUEL scored (by period), tower
-points, total points, and the robot's path (autonomous and full match).
+Automated scouting of FRC 2026 **REBUILT** matches from the match videos linked on The Blue Alliance. For every
+robot in a match it estimates the FUEL it scored (by period), its tower and total points, and its path around the
+field, with no scouts in the stands.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for UML diagrams of the whole system (entry
-point to exit point, with the commands to run each part), [PLAN.md](PLAN.md) for the design and
-the algorithms, and [RESULTS.md](RESULTS.md) for measured accuracy.
+How it works, in one breath:
+1. It reads the alliance's live fuel counter off the broadcast.
+2. It finds and identifies every robot in the three camera views (bumper numbers plus appearance).
+3. It follows every ball in the air.
+4. It splits each jump of the scoreboard among the robots that launched in the seconds before.
+
+On 54 Chezy Champs quals that FRC 5026 scouted by hand:
+* **Alliance totals** are within 3 % of the official count.
+* **Robot identity** is right 96.7 % of the time.
+* **Per-robot fuel** is about 40 balls off per robot-match. Two human scouts watching the same robot differ by
+  about 46.
+
+[RESULTS.md](RESULTS.md) has the full measurements, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) the system
+diagrams, and [PLAN.md](PLAN.md) the design. The [replay page](https://claude.ai/artifact/57p6rqFgQRjhNeTSjAZ1TM)
+shows ten annotated match clips. Working on the code with Claude Code? [CLAUDE.md](CLAUDE.md) has the project
+rules and workflows.
+
+## Get started
+
+You need git, Python 3.10-3.12 and about 5 GB of disk (35 GB with `--full`). No GPU is needed to browse or
+re-analyse matches. An NVIDIA GPU makes processing new videos much faster.
+
+```bash
+git clone https://github.com/bruce-peters/frc-auto-scout.git
+cd frc-auto-scout
+python scripts/setup.py
+```
+
+`setup.py` does the following:
+* creates `.venv` and installs `requirements.txt`;
+* downloads the **starter pack** (~0.35 GB): results for 131 matches, the trained detectors, cached TBA data and
+  camera calibrations, and the robot-recognition probes;
+* writes `.env`.
+
+It is safe to re-run. Options:
+
+| command | adds |
+| --- | --- |
+| `python scripts/setup.py --full` | the **full pack**: cached detection scans for all 131 matches (~10 GB) and the 60 fps ball logs (~1.7 GB), plus every match video from YouTube (~22 GB). Lets you re-run any part of the analysis. |
+| `python scripts/setup.py --videos 5` | the first 5 match videos (or `--videos all`, or `--videos 2026cc_qm54,2026cc_qm17`) |
+| `python scripts/setup.py --cuda` | the CUDA build of PyTorch, for an NVIDIA GPU |
+
+Then use the environment it made: `.venv\Scripts\activate` on Windows, `source .venv/bin/activate` on macOS and
+Linux. The commands below assume it is active.
+
+### Things to try
+
+**Browse every match** with everything the system saw drawn on the video. A match's video plays once you have
+downloaded it with `--videos`.
+
+```bash
+python -m autoscout.inspector --open        # http://localhost:8765
+```
+
+**Re-run a match's analysis** (tracking, identity, fuel credit) from its cached scan. This needs the full pack,
+takes seconds, and needs no GPU or video:
+
+```bash
+python -m autoscout 2026cc_qm54 --reanalyse
+```
+
+**Change something and see what moves.** Most behaviour hangs off module-level switches in
+`autoscout/pipeline.py` and `autoscout/attribution.py`, each with a comment saying what it does and what it was
+worth:
+
+```python
+from autoscout import pipeline
+pipeline.ELIM_ARCS = False                      # turn off process-of-elimination for box-less launch arcs
+res = pipeline.reanalyse("2026cc_qm54")         # rewrites output/2026cc_qm54/result.json
+print({t: v["fuel"] for t, v in res["teams"].items() if str(t).isdigit()})
+```
+
+**Score everything** against the official totals and fuel OPR, which regenerates RESULTS.md:
+
+```bash
+python scripts/evaluate.py
+```
+
+**Render an annotated video** of a match slice. This needs the match video:
+
+```bash
+python -m autoscout.render 2026cc_qm54 --t0 110 --t1 140
+```
+
+**Process a match that is not in the pack.** Put a free TBA API key in `.env`
+([thebluealliance.com/account](https://www.thebluealliance.com/account)). This downloads the video and runs the
+full pipeline, at ~5 min a match on a GPU:
+
+```bash
+python -m autoscout 2026cc_qm1
+```
+
+**Run the tests:** `python -m pytest -q tests`
+
+### What is not included
+
+* **FRC 5026's scouting export** (`data/scouting/`) stays private. Tools that score against it
+  (`scripts/score_scouting.py`, `data/exp_attrmodel/tools/build_ds.py` and the A/B harnesses in `data/exp_*/tools`)
+  need a scouting CSV of your own in the same format (`autoscout/scouting.py`). The credit model those tools fit
+  ships ready-made in `models/attr_model.json`.
+* **Detector training sets** (`data/datasets/`, from Roboflow): rebuild them with a `ROBOFLOW_API_KEY` and
+  `scripts/merge_datasets.py`.
+* **DINOv2 crop embeddings** (`data/exp_dino/emb/`, 4.4 GB): only needed to retrain the robot-recognition probes,
+  which ship in the starter pack. `scripts/build_dino_probe.py embed` rebuilds them.
+
+### Repository map
+
+| path | what |
+| --- | --- |
+| `autoscout/` | the pipeline: `pipeline.py` (scan + analysis), `attribution.py` (fuel credit), `identity.py`, `fuel.py`, `robots.py`, `overlay.py`, `tba.py`, `inspector/` (the browser viewer) |
+| `scripts/` | batch runs, evaluation, setup and data packing |
+| `data/exp_*/` | one folder per experiment: a `RESULTS_section.md` write-up and its `tools/` |
+| `output/<match>/` | per-match results (from the data packs, or written when you process a match) |
+| `models/` | the fitted credit model (`attr_model.json`) and detector weights (from the starter pack) |
 
 ## Match inspector (diagnose matches in a browser)
 
@@ -24,7 +135,7 @@ click anywhere to seek. Tabs list teams, identity segments (filter to the contra
 launches and flags. Links like `http://localhost:8765/#match=2026cagle_qm7&t=20` open a match at
 a time. The "How it works" tab renders the architecture diagrams.
 
-## Quick start
+## Command line
 
 ```bash
 .venv/Scripts/python -m autoscout 2026casnv_qm2            # one match
@@ -66,17 +177,19 @@ fuel tally per team). Ready-made examples are in `output/videos/`.
    distance and combined with inverse-covariance weights, then fed to a 3-slot-per-alliance
    Kalman tracker that trusts each camera accordingly. Identity by constrained bumper OCR
    (3 candidates per alliance from TBA) + appearance + a DINOv2 probe trained on each team's
-   robot in its *other* matches, solved with a Viterbi over slot->team labels in which two
-   tracks of one robot may share a team (held-out identity 97 %). While a robot is hidden from
-   every camera its position is interpolated between sightings (gaps up to 15 s).
-4. **Fuel** — moving-yellow blob detection at 30 Hz, ballistic tracking, shots = rising
-   projectile tracks, traced back to the launching robot.
+   robot in the event's *earlier* matches (so it works live), solved with a Viterbi over slot->team
+   labels in which two co-located tracks of one robot may share a team but two tracks metres apart may
+   not (held-out identity 96.7 %). While a robot is hidden from every camera its position is
+   interpolated between sightings (gaps up to 15 s).
+4. **Fuel** — moving-yellow blob detection, tracked at 60 Hz where the webcast has 60 real pictures a
+   second (every Chezy match, some Championship ones) and at 30 Hz on webcasts that show each picture
+   twice; shots = rising projectile tracks, traced back to the robot box they rise out of. A robot or
+   arc nothing identifies goes, by elimination, to the one robot of its alliance not seen elsewhere.
 5. **Attribution** — each counter increment is shared among the alliance's robots by detected
    launches in the preceding 0.8-5.5 s (peak 2.8 s), gated by "robot is in its alliance zone" (rule G407).
-   A robot no camera can see cannot show launch arcs, so a hidden in-zone robot is credited as if
-   it had 2 launches per window (`attribution.HIDDEN`), while one in plain view launching nothing
-   gets almost nothing; arcs rising from where a hidden robot is interpolated to be are traced to it.
-   The weights come from a small model fitted once to FRC 5026's human scouting (`models/attr_model.json`).
+   A robot no camera can see cannot show launch arcs, so a hidden in-zone robot gets a few pseudo-launches
+   per window, while one in plain view launching nothing gets almost nothing. The weights come from a small
+   model fitted once to FRC 5026's human scouting (`models/attr_model.json`).
    It uses only that match's video: no OPR or other team history moves balls between teams.
    `result.json` also keeps the older hand-tuned split as `fuel_video`.
 6. **Points** — fuel points + tower points from TBA's per-robot breakdown.
@@ -123,7 +236,8 @@ Score the pipeline against the labels (also appended to RESULTS.md by `scripts/e
 
 Per match, processing takes ~4-6 min on an RTX 4070 (three in parallel ≈ 2 min/match). Re-running
 only the analysis (tracking, identity, attribution) from the cached scan takes seconds:
-`python -c "from autoscout import pipeline; pipeline.reanalyse('2026casnv_qm2')"`.
+`python -m autoscout 2026casnv_qm2 --reanalyse`. A 60 fps fuel re-scan (`data/exp_track/tools/rescan60.py`) adds
+~5 min a match and only helps webcasts with 60 real pictures a second (`autoscout/tracks60.py` checks).
 
 ## What the numbers mean
 
@@ -138,8 +252,9 @@ only the analysis (tracking, identity, attribution) from the cached scan takes s
 ## Known limitations
 
 * Per-team numbers are a *split* of an exact alliance total. They depend on correct robot
-  identity (bumper OCR + appearance, ~89 % agreement on held-out bumper reads) and on launch arcs
-  being visible. A hidden robot is credited from where it was interpolated to be and from being
+  identity (bumper OCR + appearance, 96.7 % agreement on held-out bumper reads) and on picking the
+  right robot for each launch arc: in one-shooter bursts about a third of the arcs still go to a
+  teammate standing next to the shooter. A hidden robot is credited from where it was interpolated to be and from being
   unseen while in its zone; this is a prior, not a measurement, so when two robots of an alliance
   are hidden at once their split is close to even. Gaps longer than 15 s are not bridged.
 * Without the score overlay the alliance total comes from TBA (or, with neither, from the

@@ -142,3 +142,58 @@ because at Chezy balls are scored almost all the time.
   * `fuel.BallisticTracker` scales itself to 60 Hz too, but it did not beat greedy.
 * **Logs:** 60 Hz blob logs (gzip, about 21 MB a match) are in `data/exp_track/blobs60/`.
 * **Tools:** `data/exp_track/tools/` (`track_lab.py`, `track_ab.py`, `rescan60.py`, `render_arcs.py`).
+
+### 60 Hz on the FIRST production (2026-10-19 morning)
+
+**Problem.** After finalize v12, the main session found that 60 Hz loses most launches on the FIRST production,
+which covers every non-Chezy match. For example, 2026cancmp_qm5 dropped from 1,068 credited launches at 30 Hz to
+142 at 60 Hz. The A/B above covered Chezy only, so this never showed. The main session limited 60 Hz to Chezy
+(`pipeline.FUEL_60HZ_PRODS = ("chezy",)`) and re-analysed the 62 non-Chezy matches at 30 Hz.
+
+**Cause: most FIRST webcasts are 30 pictures a second, each shown twice in a 60 fps file.**
+
+* **Frame differences.** Consecutive frames alternate tiny / large: mean |grey difference| 0.2-0.4 vs 2.4-3.3
+  on cancmp_qm5, cagle_qm32 and joh_sf7m1. On Chezy it is uniform, 1.1-1.9.
+  * 57 of the 62 FIRST videos are doubled: about half of all consecutive frames are near-copies (0.47-0.53),
+    at every container rate seen (59.43-60.00 fps).
+  * The rest are true 60p, with a near-copy share of at most 0.07: all 69 Chezy videos and 5 Championship
+    matches (2026joh_qm3, qm14, qm30, qm39, qm54).
+  * `data/exp_track/tools/dup_scan.py`, `dup_frames.json`.
+* **Blobs.** In the 60 Hz blob log of cancmp_qm5, the main view has 64 / 65.5 blobs per frame on even / odd
+  frames, so detection is fine. But 38-48 % of a frame's blobs repeat within 1.5 px in the next frame (Chezy:
+  12 %). The tracker sees every ball position twice, so the motion goes still, jump, still, jump.
+* **Tracks.** Before splitting, all frames give more shot tracks than one frame per pair (2,060 vs 680). After
+  `split_at_jumps`, which cuts at every jump in that staircase, they give fewer (1,765 vs 3,013). The surviving
+  pieces are short (median 4 points, i.e. 2 distinct positions), and the launch gate rejects most of them.
+* **Credited launches,** cancmp_qm5 with today's defaults, analysed in memory:
+
+  | tracks | credited launches |
+  | --- | ---: |
+  | stored 30 Hz | 1,068 |
+  | 60 Hz, all frames | 142 |
+  | 60 Hz log, odd frames only | 1,159 |
+  | 60 Hz log, even frames only | identical tracks to the stored 30 Hz ones |
+
+* **True-60p FIRST matches behave like Chezy** at 60 Hz: 2026joh_qm30 goes 916 -> 1,057 and joh_qm39
+  1,616 -> 1,904.
+
+**Fix.** Decide per video, not per production. Doubled-picture videos stay at 30 Hz; only true-60p videos get 60
+Hz. `data/exp_track/tools/dup60.py` has both tests, and each separates the two kinds cleanly on all 131 matches:
+
+* **From the 60 Hz blob log alone:** blob-repeat share. Doubled videos are at least 0.40, true 60p at most 0.19;
+  threshold 0.30. Suggested wiring: `tracks60.load` returns None when `dup60.duplicated_pictures(log)`, so the
+  match keeps its 30 Hz tracks and `fuel_hz` says 30.
+* **From the video:** near-copy share. Doubled about 0.5, true 60p at most 0.07; threshold 0.30. Suggested wiring:
+  a 60 Hz scan of a new match uses `fuel_step` 2 when `dup60.duplicated_frames(video)`.
+
+The production switch the main session made, Chezy only, is safe: it never applies 60 Hz to a doubled video. It
+only leaves the 5 true-60p Johnson matches at 30 Hz. `data/exp_track/true60p.txt` lists the 74 matches where 60 Hz
+applies.
+
+**The overnight logs.** For the 57 doubled FIRST videos the 60 Hz logs hold nothing new: one frame of each pair
+is exactly the 30 Hz analysis the scan already has. They can be deleted, or kept as 30 Hz logs. Of the 66
+overnight logs, the 4 Chezy playoff matches and the 5 Johnson matches are real 60 Hz and usable.
+
+**Correction to the sections above.** The recall gains and the deciding A/B were measured on Chezy quals, all
+true 60p. They hold for true-60p webcasts. Most FIRST events stream 30p, where 30 Hz already sees every picture
+and 60 Hz cannot help.

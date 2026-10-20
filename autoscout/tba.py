@@ -21,9 +21,16 @@ def get(path: str, max_age_s: float = 7 * 24 * 3600) -> object:
     if fn.exists() and time.time() - fn.stat().st_mtime < max_age_s:
         return json.loads(fn.read_text())
     if not TBA_API_KEY:
-        raise RuntimeError("TBA_API_KEY missing from .env")
-    r = requests.get(BASE + path, headers={"X-TBA-Auth-Key": TBA_API_KEY}, timeout=30)
-    r.raise_for_status()
+        if fn.exists():  # e.g. the cache shipped in the starter data pack (scripts/setup.py): use it as it is
+            return json.loads(fn.read_text())
+        raise RuntimeError("TBA_API_KEY missing from .env (needed for matches that are not in the data cache)")
+    try:
+        r = requests.get(BASE + path, headers={"X-TBA-Auth-Key": TBA_API_KEY}, timeout=30)
+        r.raise_for_status()
+    except requests.RequestException:
+        if fn.exists():  # offline or TBA down: a stale answer beats none
+            return json.loads(fn.read_text())
+        raise
     data = r.json()
     fn.write_text(json.dumps(data))
     return data

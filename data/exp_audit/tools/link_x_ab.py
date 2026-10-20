@@ -52,6 +52,7 @@ for k in keys:
     with open(config.OUTPUT / k / "scan.pkl", "rb") as fh:
         md = pickle.load(fh)
     pipeline.load_dino(md, config.OUTPUT / k)
+    pipeline.load_fuel60(md)  # 60 Hz flight tracks when pipeline.FUEL_60HZ and the match has a 60 Hz blob log
     for vi, x in enumerate(variants):
         saved = {}
         if arms is not None:
@@ -63,6 +64,7 @@ for k in keys:
             pipeline.LINK_X_TIE = x
             name = f"x{x:g}"
         res = pipeline.analyse(md, pipeline.Options())
+        res["fuel_hz"] = md.fuel_hz
         for k_, v_ in saved.items():
             setattr(*_owner(k_), v_)
         od = dst / name / k
