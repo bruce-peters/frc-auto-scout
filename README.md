@@ -32,6 +32,9 @@ cd frc-auto-scout
 python scripts/setup.py
 ```
 
+Video downloads may print a yt-dlp warning about a JavaScript runtime. It is harmless; if YouTube downloads start
+failing, install [deno](https://deno.com) and run setup again.
+
 On Windows, clone to a short path such as `C:\code\frc-auto-scout`. PyTorch installs files nearly 200 characters
 deep, and unless [long paths are enabled](https://pip.pypa.io/warnings/enable-long-paths), a path past Windows'
 260-character limit makes the install fail.
