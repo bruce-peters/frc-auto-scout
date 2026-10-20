@@ -46,9 +46,26 @@ def run(cmd: list, **kw) -> None:
 
 
 # ---------------------------------------------------------------- environment
+def long_paths_ok() -> bool:
+    """Windows: is the 260-character path limit lifted (LongPathsEnabled)? Elsewhere always True."""
+    if os.name != "nt":
+        return True
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as k:
+            return bool(winreg.QueryValueEx(k, "LongPathsEnabled")[0])
+    except OSError:
+        return False
+
+
 def setup_env(cuda: bool) -> Path:
     if not (3, 10) <= sys.version_info[:2] <= (3, 12):
         say(f"! Python {sys.version.split()[0]}: auto-scout is tested on 3.10-3.12; continuing anyway")
+    # PyTorch installs files ~190 characters deep under .venv; past Windows' 260-character limit pip fails
+    if len(str(ROOT)) > 60 and not long_paths_ok():
+        say(f"! This folder's path is {len(str(ROOT))} characters long and Windows long paths are off, so installing "
+            "PyTorch will likely fail.\n  Clone to a short path (e.g. C:\\code\\frc-auto-scout) or enable long paths: "
+            "https://pip.pypa.io/warnings/enable-long-paths")
     py = venv_python()
     if not py.exists():
         say("Creating .venv")

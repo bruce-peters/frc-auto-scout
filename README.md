@@ -32,6 +32,10 @@ cd frc-auto-scout
 python scripts/setup.py
 ```
 
+On Windows, clone to a short path such as `C:\code\frc-auto-scout`. PyTorch installs files nearly 200 characters
+deep, and unless [long paths are enabled](https://pip.pypa.io/warnings/enable-long-paths), a path past Windows'
+260-character limit makes the install fail.
+
 `setup.py` does the following:
 * creates `.venv` and installs `requirements.txt`;
 * downloads the **starter pack** (~0.35 GB): results for 131 matches, the trained detectors, cached TBA data and
